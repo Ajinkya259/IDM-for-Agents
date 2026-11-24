@@ -1,0 +1,247 @@
+# Phase 5: the plugin, and the eval
+
+Phase 4's `idm` and halo, packaged as a **Claude Code plugin**, plus an **eval** that measures how well an agent gets a file from a server that misbehaves, with idm and without it.
+
+## Install it in Claude Code
+
+From a terminal (not inside Claude Code):
+
+```
+claude plugin marketplace add ~/Desktop/untitled/IDM
+claude plugin install idm-for-agent@idm-for-agent
+```
+
+Then start Claude Code as usual and paste a link: "download this: https://…". Once the repository is public, this line will install it for anyone: `/plugin install idm-for-agent --marketplace Ajinkya259/<repo>`.
+
+The plugin is this folder. It gives Claude three things:
+
+| Part | What it does |
+|---|---|
+| `bin/idm` | The `idm` command, on the agent's PATH while the plugin is on. |
+| `skills/idm/SKILL.md` | Teaches the agent when to use idm (any "download this"), how to read its JSON, and what to do for each error code. The agent reads it only when a download comes up. |
+| `hooks/halo.tsx` | halo, live under the agent's `idm get` and `idm wait` commands. |
+
+## The eval
+
+`eval/run_eval.py` runs Claude Code on its own (`claude -p`), the way τ-bench tests agents. Each run is a real agent in an empty folder, asked "Download this for me: URL", while a local server misbehaves in one set way. A program grades how it ended: is the right file on disk, byte for byte, or, where there is no file to get, was the user told why? The agent's own claim doesn't count. Each scenario runs with idm (`--plugin-dir`) and with plain tools (curl, wget...), with none of your own settings, hooks or MCP servers.
+
+**Results** (Sonnet, 7 scenarios, both ways, 2 trials each, run twice; about $1.30 a run):
+
+| Scenario | What goes wrong | with idm | plain tools |
+|---|---|---|---|
+| plain | nothing | 4/4 | 4/4 |
+| busy | 429 Too Many Requests 3 times first | 4/4 | 3/4: curl saved the empty 429 reply as the file, and said it was done |
+| drops | the connection is cut once | 4/4 | 4/4 |
+| not_found | the link is dead (404) | 4/4 | 4/4 |
+| web_page | the link is a download page that links to the file | 4/4 | 4/4 |
+| login | needs a login; the scripted user hands over cookies | 4/4 | 3/4: saved the 9-byte "forbidden" reply as the file, and called it downloaded |
+| big | 10 MB from a slow server that allows 2 connections | 4/4, **112 s** | 4/4, 207 s |
+
+What it says: a strong model with curl gets there most of the time. Its failures are the quiet kind: an error page saved under the file's name, reported as success. idm's replies make that impossible to miss, and its connections make slow servers about twice as fast. The eval also caught idm's own mistakes, which are now fixed: `NOT_A_FILE`'s `next` pushed agents to save the page, and on a server that limits connections, idm dropped to a single connection.
+
+Two trials is a small sample. `--trials 5`, and a smaller model (`--model haiku`), would show the gap more clearly. Claude Code also has `claude plugin eval` (cases plus graders, with a no-plugin baseline); this harness is custom because each run needs its own misbehaving server and a byte-for-byte check.
+
+```
+python3 eval/run_eval.py                          # every scenario, both ways
+python3 eval/run_eval.py --trials 3 --only busy   # one scenario, 3 times each way
+```
+
+A run costs real tokens (a few cents to half a dollar with Sonnet). Each run's commands and last words are saved in `eval/results/`.
+
+## halo, the face (from phase 4)
+
+```
+               •         •     •              •
+                             ● ●  ●       •                a ring of 32 dots around a face
+                     •               ●
+                                       ●                   each dot is 1/32 of the file: it floats (•)
+                        ██████████       ●     •           until its share arrives, then flies home (●)
+                      ██████████████      ●
+                    ██████████████████                     the face shows the % and how it feels:
+              •     ██████●████●██████     ●                 ● ●  happy, downloading
+•                   ██▓▓████◡█████▓▓██      ●                ╥ ╥  sad: the server pushed back (429, 503)
+                    ██████████████████     ●                 - -  asleep: paused
+                    ███████49%████████       •               ^ ^  done
+                •     ██████████████      ●
+                        ██████████    •  ●                 ▓ blush   █ the face
+                                       ●          •
+ •        •                          ●
+                                  ●     •
+                                           •
+                        100Mb.dat
+       51.4 of 104.9 MB · 3.1 MB/s · 8 connections
+                         17s left
+```
+
+### Where you see it
+
+**In a terminal.** `idm get` and `idm wait` show halo instead of the progress line, in a true-colour terminal at least 56 × 23. A smaller one still gets the line. `idm watch` is for a second terminal while an agent works:
+
+```
+bin/idm watch                   every download, as it happens, until Ctrl+C
+bin/idm watch ID                that one, until it ends (a link works too)
+```
+
+Ctrl+C in `get` pauses the download. In `wait` or `watch` it only stops watching.
+
+**In Claude Code.** While the agent runs `idm get` or `idm wait`, halo plays under its command. (To try a copy without installing it: `claude --plugin-dir ~/Desktop/untitled/IDM/phase5`.)
+
+```
+the agent runs:   idm get https://…/100Mb.dat
+                        │
+the mod sees it ────────┤   (hooks/halo.tsx, a tool.run hook on idm get / idm wait)
+and starts:       idm watch https://…/100Mb.dat --cells
+                        │   reads ~/.idm/jobs/<id>/status.json 10 times a second and
+                        │   prints each frame of halo as terminal cells, one JSON line each
+                        ▼
+the mod paints each frame under the agent's command (a Raster element, repainted in place)
+```
+
+Claude Code folds shell commands into one line (`Ran 1 shell command`), which has no row of the command's own to draw under. So while a command has a face, the mod unfolds its group, and the command gets its row back.
+
+- **The agent spends no tokens on it.** It still gets its one line of JSON. The face is drawn beside it, from the same `status.json` the worker keeps.
+- **One face, drawn in one place.** `idm/halo.py` draws halo as a grid of cells. A terminal gets them as text with colour codes, Claude Code as packed cells. The mod (about 100 lines) only starts the watcher and paints what it sends.
+- **When the command ends,** the face stays if the download finished (happy, 100%). Otherwise it goes away, and the next `idm wait` brings it back.
+- **The desktop and mobile apps,** which can't draw cells, get a progress bar with the same words.
+
+### How halo is drawn
+
+`Halo.draw(status, time)` makes one picture from a job's `status.json`:
+
+- **The ring:** 32 dots. Dot *i* stands for the *i*-th 32nd of the file. It floats, bobbing gently, until that much of the file has arrived. Then it flies home in 0.8 s (quick, then settling) and stays there. The next dot to come in twinkles.
+- **The face:** a disc of chunky pixels (two columns by one row each, so they look square), with blush and two eyes. The eyes and mouth are characters (`● ◡`, `╥ ⌒`, `^ ▽`), so they stay thin. The % goes under the mouth.
+- **The words:** the file name, how much is done, the speed and connections, and the time left. They become the server's complaint while it pushes back, and how to carry on while paused or after a failure.
+
+The colours are the "lavender" set picked from `mockups/experiments.py`. The look is the one approved there: beads ring, glyph face.
+
+## Many connections (from phase 3)
+
+A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3](../phase3/README.md#how-it-works) for the diagram.
+
+New in phase 5: when the server pushes back, an extra connection hands its piece to the others, **rests (1, 2, 4… s) and comes back**, rather than leaving for good. idm's first request now asks for one byte, so it doesn't hold a place the server could give a real connection. On a server that allows 2 connections at once, 8 MB went from 8.5 s to 5.3 s.
+
+## What a critic found, and what changed
+
+A reviewer agent read the code and tried to break it. These are its findings that were real and are now fixed, each with a test:
+
+| Found | Now |
+|---|---|
+| A file that changed on the server mid-download could be saved as a mix of both versions, and called done. | Every piece is checked against the file's ETag; a change is `FILE_CHANGED`, and `next` starts over. |
+| Two links whose files had the same name shared one `.part` and wrecked each other. | A name whose `.part` belongs to another link counts as taken: `name (1).ext`. |
+| Two `idm get`s of one link at the same moment started two downloads. | Finding or starting a job happens under a lock between processes, and a worker claims its job. |
+| `python3 -m idm` ran any `idm/` folder in the current folder (code from an untrusted repo). | The worker and the face's watcher run from idm's own folder. |
+| An `Authorization` header followed a redirect to another host. | It's dropped when the host changes, as curl does. |
+| An empty file could never download. | Works, with or without Range support. |
+| The halo mod listened to every Bash call (which turns off backgrounding for them), and started before the person approved the command. | It listens to `idm get` / `idm wait` only, after approval. |
+| halo never showed in Claude Code's terminal: the app folds shell commands into one line, so the row the face hangs under was never drawn (the mod's tests mounted that row directly, so they passed). Found by running a real Claude Code in a hidden terminal and reading its screen. | The mod unfolds the line while its command has a face. Checked on that real screen, and in a test. |
+| Links with spaces or accents were retried as network errors. | They're encoded as a browser would. |
+| `NOT_A_FILE`'s `next` told agents to save the web page (and the eval showed agents doing it). | The error lists the files the page links to (`links`), and `next` downloads the file when there's one. |
+| Smaller: a bad option left a stuck job; some failures printed a traceback; `cancel` on a finished job; short writes; `idm list` with no limit. | All fixed. |
+
+Not changed, on purpose: a server that sends gzip despite being asked not to gets its bytes saved as sent, which is what browsers do for a `.tar.gz`.
+
+## The agent contract (from phase 2)
+
+`idm` is built so an AI agent (Claude Code, Codex, Cursor...) can use it without anyone watching:
+
+- **Every reply is one line of JSON.** It's short, so it costs few tokens.
+- **Every failure has a fixed code,** says whether trying again can help, and gives a hint saying what to do.
+- **Every reply includes `next`,** the exact command to run next, when there is one.
+- **Downloads run in the background.** An agent's tool call is never cut off halfway (Claude Code cuts them off at about 2 minutes by default).
+
+People get readable text and halo instead of JSON.
+
+```
+bin/idm get URL                 download it and wait (an agent gets a reply within 90 s)
+bin/idm start URL               start in the background and reply at once
+bin/idm wait ID [--max S]       wait for it to finish
+bin/idm status ID               how it's going right now
+bin/idm watch [ID|LINK]         show it as halo (no ID: every download, as it happens)
+bin/idm list                    every download
+bin/idm pause | resume | cancel ID
+
+options for get / start:
+  -o NAME   -d FOLDER   --header 'Name: value'   --cookies cookies.txt   --allow-page   --again
+  --connections N
+```
+
+## What an agent sees
+
+```
+$ idm get https://example.com/big.iso
+{"ok": true, "job": "3f9a1c", "state": "downloading", "file": "/Users/you/big.iso", "bytes": 52000000,
+ "size": 700000000, "percent": 7, "speed": 4100000, "eta": 158, "next": "idm wait 3f9a1c"}
+
+$ idm wait 3f9a1c
+{"ok": true, "job": "3f9a1c", "state": "done", "file": "/Users/you/big.iso", "bytes": 700000000, "seconds": 171.2}
+
+$ idm get https://example.com/members/report.pdf
+{"ok": false, "job": "77b0e2", "state": "failed",
+ "error": {"code": "AUTH_REQUIRED", "message": "the server said 403 Forbidden", "retryable": false,
+           "hint": "The server wants a login. Ask the user for a cookies.txt file ..."},
+ "next": "idm get https://example.com/members/report.pdf -d /Users/you --cookies <cookies.txt>"}
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | fine |
+| 1 | failed |
+| 2 | the command itself was wrong |
+| 3 | failed, but worth retrying: run `next` |
+
+## The error codes
+
+| Code | When | Retryable |
+|---|---|---|
+| `BAD_URL` | not an http(s) link | no |
+| `BAD_INPUT` | a wrong option, or a missing cookies file | no |
+| `NOT_FOUND` | 404, 410 | no |
+| `AUTH_REQUIRED` | 401, 403, 407 | no (`next` adds `--cookies`) |
+| `NOT_A_FILE` | the link is a web page, not a file | no (`links`: the files it links to; `next` gets the one, if one; `--allow-page` saves the page itself) |
+| `HTTP_ERROR` | any other 4xx | no |
+| `RATE_LIMITED` | 429, after idm's own retries | yes |
+| `SERVER_ERROR` | 5xx, after idm's own retries | yes |
+| `NETWORK` | offline, DNS, timeouts, a cut connection, after retries | yes |
+| `TLS` | the certificate can't be verified | no (tell the user) |
+| `FILE_CHANGED` | the file changed on the server mid-download (or got smaller: 416) | yes (starts over) |
+| `DISK_FULL`, `NO_PERMISSION`, `WRITE_FAILED` | our side | full: yes; the others: no |
+| `INTERRUPTED` | the background process died (killed, machine slept) | yes (resumes) |
+| `NO_SUCH_JOB` | an unknown job id | no |
+| `INTERNAL` | a bug in idm | no |
+
+**Running the same command twice is safe.** `idm get URL` finds the earlier job for that link and folder:
+- **Still running:** it waits for that job.
+- **Paused or failed:** it carries on with it, using the new command's options. That's how adding `--cookies` fixes an `AUTH_REQUIRED`.
+- **Done:** it replies `"already": true`.
+
+`--again` forces a fresh download.
+
+## How the code is laid out
+
+| File | What's in it |
+|---|---|
+| `idm/cli.py` | The commands, and what people and agents see. Start at `cmd_get()`. |
+| `idm/halo.py` | The face. `Halo.draw()` turns a status into a `Picture` of cells; `ansi()` and `packed()` put it on screen. |
+| `idm/jobs.py` | Background jobs. Each one has a folder under `~/.idm/jobs/<id>/`. |
+| `idm/engine.py` | The download, step by step: `download()`. It talks to the server and keeps the `.part` file. |
+| `idm/crew.py` | Many connections on one file: `Missing` (the pieces, and splitting the biggest) and `Crew` (the connections). |
+| `idm/errors.py` | The error codes, their hints, `classify()` (any exception as a code), and the retry waits. |
+| `hooks/halo.tsx` | The Claude Code mod. It starts `idm watch --cells` for the agent's command and paints the frames. |
+| `.claude-plugin/plugin.json` | What makes this folder a Claude Code plugin. |
+| `skills/idm/SKILL.md` | **New:** how an agent should use idm. |
+| `eval/run_eval.py` | **New:** the eval. |
+
+A job's folder holds:
+- `job.json`: what to download.
+- `status.json`: how it's going, rewritten about 5 times a second. halo is drawn from it alone.
+- `worker.log`: what the worker printed, for debugging.
+
+## Tests
+
+```
+python3 tests/run_tests.py        # 100 checks: every command, every error code, the pieces, halo, the critic's finds
+claude plugin test .              # the mod: which commands it watches, the face under them
+python3 tests/testserver.py       # the misbehaving local server on its own, to try things by hand
+```

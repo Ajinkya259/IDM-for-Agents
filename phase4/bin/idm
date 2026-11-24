@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Run idm straight from this folder, without installing it:   bin/idm get URL"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+
+from idm.cli import main   # noqa: E402  (needs the path above)
+
+sys.exit(main())

@@ -1,0 +1,16 @@
+{
+  "name": "idm-for-agent",
+  "owner": {
+    "name": "Ajinkya259"
+  },
+  "metadata": {
+    "description": "IDM for Agent: a download manager made for AI agents"
+  },
+  "plugins": [
+    {
+      "name": "idm-for-agent",
+      "source": "./phase5",
+      "description": "A download manager made for AI agents, with halo, the download face"
+    }
+  ]
+}

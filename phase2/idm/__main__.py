@@ -1,4 +1,4 @@
-"""`python3 -m tako ...` runs the command line."""
+"""`python3 -m idm ...` runs the command line."""
 import sys
 
 from .cli import main

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Tests for tako, phase 2: every command, every error code, and the background jobs.
+Tests for idm, phase 2: every command, every error code, and the background jobs.
 
     python3 tests/run_tests.py          (about 2 minutes; uses free local ports)
     python3 tests/run_tests.py pause    (only the tests with "pause" in their name)
 
-Each test runs the real `bin/tako` against tests/testserver.py, with its own TAKO_HOME and
+Each test runs the real `bin/idm` against tests/testserver.py, with its own IDM_HOME and
 download folder, and checks the JSON replies, the exit codes and the saved bytes.
 """
 import hashlib
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TAKO = [sys.executable, str(HERE.parent / "bin" / "tako")]
+IDM = [sys.executable, str(HERE.parent / "bin" / "idm")]
 TESTS, RESULTS = [], []
 LEFTOVERS = []                     # servers and sandboxes to clean up after each test, pass or fail
 
@@ -66,17 +66,17 @@ class Server:
 
 
 class Sandbox:
-    """A TAKO_HOME and a download folder of its own, and a way to run tako in them."""
+    """A IDM_HOME and a download folder of its own, and a way to run idm in them."""
 
     def __init__(self, **env):
-        self.root = Path(tempfile.mkdtemp(prefix="tako-test-"))
+        self.root = Path(tempfile.mkdtemp(prefix="idm-test-"))
         self.dl = self.root / "dl"
-        self.env = {**os.environ, "TAKO_HOME": str(self.root / "home"), **env}
+        self.env = {**os.environ, "IDM_HOME": str(self.root / "home"), **env}
         LEFTOVERS.append(self.clean)
 
-    def tako(self, *args, timeout=60):
-        """Run tako as an agent would (output is a pipe).  Returns (exit code, the JSON reply)."""
-        p = subprocess.run([*TAKO, *args], env=self.env, capture_output=True, text=True,
+    def idm(self, *args, timeout=60):
+        """Run idm as an agent would (output is a pipe).  Returns (exit code, the JSON reply)."""
+        p = subprocess.run([*IDM, *args], env=self.env, capture_output=True, text=True,
                            timeout=timeout)
         lines = p.stdout.strip().splitlines()
         try:
@@ -86,10 +86,10 @@ class Sandbox:
         return p.returncode, reply
 
     def get(self, url, *args, **kw):
-        return self.tako("get", url, "-d", str(self.dl), *args, **kw)
+        return self.idm("get", url, "-d", str(self.dl), *args, **kw)
 
     def start(self, url, *args):
-        return self.tako("start", url, "-d", str(self.dl), *args)
+        return self.idm("start", url, "-d", str(self.dl), *args)
 
     def status_file(self, job):
         return json.loads((self.root / "home" / "jobs" / job / "status.json").read_text())
@@ -140,9 +140,9 @@ def wait_until(condition, timeout=10):
 
 
 def in_terminal(args, env, interrupt_after=None, timeout=60):
-    """Run tako in a pseudo-terminal, as a person would.  Returns (exit code, what was shown)."""
+    """Run idm in a pseudo-terminal, as a person would.  Returns (exit code, what was shown)."""
     master, slave = pty.openpty()
-    p = subprocess.Popen([*TAKO, *args], env=env, stdin=slave, stdout=slave, stderr=slave)
+    p = subprocess.Popen([*IDM, *args], env=env, stdin=slave, stdout=slave, stderr=slave)
     os.close(slave)
     shown, start, sent = b"", time.time(), False
     while True:
@@ -256,33 +256,33 @@ def bad_input():
     code, r = box.get("not a link")
     check("bad link: BAD_URL, exit 1, and no job created",
           code == 1 and r.get("error", {}).get("code") == "BAD_URL"
-          and box.tako("list")[1].get("jobs") == [], r)
+          and box.idm("list")[1].get("jobs") == [], r)
     code, r = box.get("http://127.0.0.1:9/x", "--header", "no colon")
     check("bad --header: BAD_INPUT", code == 1 and r.get("error", {}).get("code") == "BAD_INPUT", r)
-    code, r = box.tako("get")
+    code, r = box.idm("get")
     check("missing argument: still one line of JSON, BAD_INPUT, exit 2",
           code == 2 and r.get("error", {}).get("code") == "BAD_INPUT", r)
     for command in ("status", "wait", "pause", "resume", "cancel"):
-        code, r = box.tako(command, "nope42")
+        code, r = box.idm(command, "nope42")
         check(f"{command} with an unknown id: NO_SUCH_JOB, exit 1",
               code == 1 and r.get("error", {}).get("code") == "NO_SUCH_JOB", r)
 
 
 @test
 def no_server_gives_up_with_next():
-    box = Sandbox(TAKO_TRIES="2")
+    box = Sandbox(IDM_TRIES="2")
     code, r = box.get(f"http://127.0.0.1:{free_port()}/x")
     e = r.get("error", {})
     check("nothing listening: NETWORK, retryable, exit 3, after retrying",
           code == 3 and e.get("code") == "NETWORK" and e.get("retryable") is True
           and "gave up after 2 tries" in e.get("message", ""), r)
     check("nothing listening: `next` resumes the same job",
-          r.get("next") == f"tako resume {r.get('job')}", r)
+          r.get("next") == f"idm resume {r.get('job')}", r)
 
 
 @test
 def server_errors():
-    srv, box = Server(), Sandbox(TAKO_TRIES="1")
+    srv, box = Server(), Sandbox(IDM_TRIES="1")
     code, r = box.get(srv.url("/status/500"))
     check("500: SERVER_ERROR, retryable, exit 3",
           code == 3 and r.get("error", {}).get("code") == "SERVER_ERROR", r)
@@ -299,10 +299,10 @@ def busy_server_is_waited_for():
     srv, box = Server("--busy", "2"), Sandbox()
     _, r = box.start(srv.url())
     seen = set()
-    wait_until(lambda: seen.add((box.tako("status", r["job"])[1].get("trouble") or {}).get("code"))
+    wait_until(lambda: seen.add((box.idm("status", r["job"])[1].get("trouble") or {}).get("code"))
                or "RATE_LIMITED" in seen, timeout=6)
     check("429 twice: while waiting, status shows trouble RATE_LIMITED", "RATE_LIMITED" in seen, seen)
-    code, done = box.tako("wait", r["job"])
+    code, done = box.idm("wait", r["job"])
     check("429 twice: then downloads, right bytes",
           code == 0 and done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
 
@@ -321,7 +321,7 @@ def no_permission():
     srv = Server()
     locked = box.root / "locked"
     locked.mkdir(mode=0o500)
-    code, r = box.tako("get", srv.url(), "-d", str(locked))
+    code, r = box.idm("get", srv.url(), "-d", str(locked))
     check("read-only folder: NO_PERMISSION, exit 1",
           code == 1 and r.get("error", {}).get("code") == "NO_PERMISSION", r)
 
@@ -333,14 +333,14 @@ def start_replies_at_once_then_wait():
     t = time.time()
     code, r = box.start(srv.url())
     took = time.time() - t
-    check("start: replies at once (under 1.5 s) with a job id and `next`: tako wait",
+    check("start: replies at once (under 1.5 s) with a job id and `next`: idm wait",
           code == 0 and took < 1.5 and r.get("state") in ("queued", "downloading")
-          and r.get("next") == f"tako wait {r.get('job')}", (took, r))
-    code, mid = box.tako("wait", r["job"], "--max", "1")
+          and r.get("next") == f"idm wait {r.get('job')}", (took, r))
+    code, mid = box.idm("wait", r["job"], "--max", "1")
     check("wait --max 1: replies while still downloading, with percent, speed and eta",
           code == 0 and mid.get("state") == "downloading" and 0 < mid.get("percent", 0) < 100
           and mid.get("speed", 0) > 0 and "eta" in mid, mid)
-    code, done = box.tako("wait", r["job"])
+    code, done = box.idm("wait", r["job"])
     check("wait: done, right bytes", done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
 
 
@@ -349,9 +349,9 @@ def get_with_max_hands_over_to_wait():
     srv, box = Server(size=6, rate=3), Sandbox()
     t = time.time()
     code, r = box.get(srv.url(), "--max", "0.5")
-    check("get --max 0.5: replies in time, still downloading, `next`: tako wait",
-          time.time() - t < 2 and r.get("state") == "downloading" and r.get("next", "").startswith("tako wait"), r)
-    code, done = box.tako("wait", r["job"])
+    check("get --max 0.5: replies in time, still downloading, `next`: idm wait",
+          time.time() - t < 2 and r.get("state") == "downloading" and r.get("next", "").startswith("idm wait"), r)
+    code, done = box.idm("wait", r["job"])
     check("then wait: done", code == 0 and done.get("state") == "done", done)
 
 
@@ -362,15 +362,15 @@ def pause_and_resume():
     job = r["job"]
     wait_until(lambda: box.status_file(job).get("bytes", 0) > 500_000)
     pid = box.status_file(job)["pid"]
-    code, p = box.tako("pause", job)
-    check("pause: state paused, some percent, `next`: tako resume",
+    code, p = box.idm("pause", job)
+    check("pause: state paused, some percent, `next`: idm resume",
           code == 0 and p.get("state") == "paused" and 0 < p.get("percent", 0) < 100
-          and p.get("next") == f"tako resume {job}", p)
+          and p.get("next") == f"idm resume {job}", p)
     check("pause: the worker has stopped, the .part file stays",
           not alive(pid) and "halo test.bin.part" in box.files(), box.files())
-    code, again = box.tako("resume", job)
+    code, again = box.idm("resume", job)
     check("resume: downloading again", code == 0 and again.get("state") in ("queued", "downloading"), again)
-    code, done = box.tako("wait", job)
+    code, done = box.idm("wait", job)
     check("resume: finishes with the right bytes",
           done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
 
@@ -380,7 +380,7 @@ def cancel_deletes_partial():
     srv, box = Server(size=8, rate=2), Sandbox()
     _, r = box.start(srv.url())
     wait_until(lambda: box.status_file(r["job"]).get("bytes", 0) > 200_000)
-    code, c = box.tako("cancel", r["job"])
+    code, c = box.idm("cancel", r["job"])
     check("cancel: state cancelled, nothing left on disk",
           code == 0 and c.get("state") == "cancelled" and box.files() == [], (c, box.files()))
 
@@ -393,12 +393,12 @@ def worker_killed_is_reported_and_resumable():
     wait_until(lambda: box.status_file(job).get("bytes", 0) > 500_000)
     os.kill(box.status_file(job)["pid"], signal.SIGKILL)
     time.sleep(0.2)
-    code, s = box.tako("status", job)
+    code, s = box.idm("status", job)
     check("worker killed: INTERRUPTED, retryable, exit 3, `next` resumes",
           code == 3 and s.get("error", {}).get("code") == "INTERRUPTED"
-          and s.get("next") == f"tako resume {job}", s)
-    box.tako("resume", job)
-    code, done = box.tako("wait", job)
+          and s.get("next") == f"idm resume {job}", s)
+    box.idm("resume", job)
+    code, done = box.idm("wait", job)
     check("worker killed: resume finishes with the right bytes",
           done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
 
@@ -406,13 +406,13 @@ def worker_killed_is_reported_and_resumable():
 @test
 def agent_cut_off_then_same_get_reattaches():
     srv, box = Server(size=6, rate=2), Sandbox()
-    p = subprocess.Popen([*TAKO, "get", srv.url(), "-d", str(box.dl)], env=box.env,
+    p = subprocess.Popen([*IDM, "get", srv.url(), "-d", str(box.dl)], env=box.env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.0)
     p.kill()                                                   # the agent's tool call was cut off
     p.wait()
     code, r = box.get(srv.url())
-    jobs = box.tako("list")[1].get("jobs", [])
+    jobs = box.idm("list")[1].get("jobs", [])
     check("cut off, then the same get: one job, carried on to done",
           code == 0 and r.get("state") == "done" and len(jobs) == 1, (r, jobs))
     check("cut off, then the same get: one file, right bytes",
@@ -424,9 +424,9 @@ def pause_resume_on_server_that_cannot_resume():
     srv, box = Server("--no-ranges", size=6, rate=2), Sandbox()
     _, r = box.start(srv.url())
     wait_until(lambda: box.status_file(r["job"]).get("bytes", 0) > 300_000)
-    box.tako("pause", r["job"])
-    box.tako("resume", r["job"])
-    code, done = box.tako("wait", r["job"])
+    box.idm("pause", r["job"])
+    box.idm("resume", r["job"])
+    code, done = box.idm("wait", r["job"])
     note = box.status_file(r["job"]).get("note", "")
     check("no-ranges server: resume starts over (and says so), right bytes",
           done.get("state") == "done" and "can't resume" in (note or "")
@@ -438,12 +438,12 @@ def file_changed_while_paused():
     srv, box = Server(size=6, rate=2), Sandbox()
     _, r = box.start(srv.url())
     wait_until(lambda: box.status_file(r["job"]).get("bytes", 0) > 300_000)
-    box.tako("pause", r["job"])
+    box.idm("pause", r["job"])
     port = srv.port
     srv.stop()
     srv = Server("--version", "2", size=6, rate=20, port=port)       # same link, new file
-    box.tako("resume", r["job"])
-    code, done = box.tako("wait", r["job"])
+    box.idm("resume", r["job"])
+    code, done = box.idm("wait", r["job"])
     note = box.status_file(r["job"]).get("note", "")
     check("file changed while paused: noticed, starts over, gets the NEW bytes",
           done.get("state") == "done" and "changed" in (note or "")
@@ -460,7 +460,7 @@ def status_file_has_what_the_face_needs():
     check("status.json: has state, bytes, size, speed, eta, file... and is fresh",
           needed <= st.keys() and st["state"] == "downloading" and time.time() - st["updated"] < 2,
           sorted(needed - st.keys()))
-    box.tako("cancel", r["job"])
+    box.idm("cancel", r["job"])
 
 
 @test
@@ -468,7 +468,7 @@ def list_is_short():
     srv, box = Server(), Sandbox()
     box.get(srv.url())
     box.get(srv.url("/status/404"))
-    code, r = box.tako("list")
+    code, r = box.idm("list")
     rows = r.get("jobs", [])
     check("list: one row per job, with job, state, url (and the error code, no hint)",
           code == 0 and len(rows) == 2 and all({"job", "state", "url"} <= row.keys() for row in rows)
@@ -488,9 +488,9 @@ def person_sees_progress_and_result():
 def person_ctrl_c_pauses():
     srv, box = Server(size=8, rate=2), Sandbox()
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, interrupt_after=1.5)
-    jobs = box.tako("list")[1].get("jobs", [])
-    check("Ctrl+C in a terminal: says paused, the job is paused, `tako resume` shown",
-          "paused at" in shown and "tako resume" in shown and jobs and jobs[0]["state"] == "paused",
+    jobs = box.idm("list")[1].get("jobs", [])
+    check("Ctrl+C in a terminal: says paused, the job is paused, `idm resume` shown",
+          "paused at" in shown and "idm resume" in shown and jobs and jobs[0]["state"] == "paused",
           (shown[-300:], jobs))
 
 

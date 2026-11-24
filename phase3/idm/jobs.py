@@ -5,8 +5,8 @@ An agent's command must never sit waiting on a big file (its tool call would be 
 every download runs as its own small background process, a "worker".  Commands only start,
 watch and stop workers.
 
-Each job lives in a folder, ~/.tako/jobs/<id>/:
-    job.json      what to download (written by `tako get` / `tako start`)
+Each job lives in a folder, ~/.idm/jobs/<id>/:
+    job.json      what to download (written by `idm get` / `idm start`)
     status.json   how it is going, rewritten by the worker about 5 times a second.  It is
                   also what the animated face will read.
     worker.log    anything the worker printed, for debugging
@@ -17,6 +17,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from dataclasses import asdict, dataclass, field
@@ -24,9 +25,9 @@ from pathlib import Path
 from typing import Optional
 
 from . import engine
-from .errors import TakoError, classify
+from .errors import IDMError, classify
 
-HOME = Path(os.environ.get("TAKO_HOME") or "~/.tako").expanduser()
+HOME = Path(os.environ.get("IDM_HOME") or "~/.idm").expanduser()
 ACTIVE = ("queued", "downloading")                     # a worker is on it
 FINAL = ("done", "failed", "paused", "cancelled")       # nothing is happening
 # and "new": created, its worker not started yet
@@ -42,6 +43,7 @@ class Job:
     headers: dict = field(default_factory=dict)    # extra request headers, e.g. Authorization
     cookies: Optional[str] = None                  # a browser cookies.txt file
     allow_page: bool = False                       # save a web page instead of refusing it
+    connections: int = 8                           # at most this many at once
     created: float = field(default_factory=time.time)
 
     @property
@@ -55,14 +57,18 @@ class Job:
         """How the job is going.  A worker that died without saying so is reported as failed."""
         st = read_json(self.dir / "status.json")
         if st.get("state") in ACTIVE and st.get("pid") and not alive(st["pid"]):
-            st = self.set_status(state="failed", error=TakoError(
+            st = self.set_status(state="failed", error=IDMError(
                 "INTERRUPTED", "the download process stopped unexpectedly").to_dict())
         return st
 
     def set_status(self, **changes):
-        st = {**read_json(self.dir / "status.json"), **changes, "updated": time.time()}
-        write_json(self.dir / "status.json", st)
+        with _writing:                                # the worker's connections share the file
+            st = {**read_json(self.dir / "status.json"), **changes, "updated": time.time()}
+            write_json(self.dir / "status.json", st)
         return st
+
+
+_writing = threading.Lock()
 
 
 # ---- finding jobs ------------------------------------------------------------------------------
@@ -77,7 +83,7 @@ def new(url, folder, name=None):
 def load(job_id):
     path = HOME / "jobs" / job_id / "job.json"
     if not path.is_file():
-        raise TakoError("NO_SUCH_JOB", f"no download with id {job_id!r}")
+        raise IDMError("NO_SUCH_JOB", f"no download with id {job_id!r}")
     return Job(**read_json(path))
 
 
@@ -103,7 +109,7 @@ def start(job):
     job.set_status(state="queued", pid=None, error=None, trouble=None, note=None)
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
     with open(job.dir / "worker.log", "a") as log:
-        worker = subprocess.Popen([sys.executable, "-m", "tako", "_work", job.id],
+        worker = subprocess.Popen([sys.executable, "-m", "idm", "_work", job.id],
                                   stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                   env=env, start_new_session=True)
     _children.append(worker)
@@ -161,14 +167,14 @@ def work(job):
         error = classify(e)
         if error is None:                             # a bug: say so, keep the details in worker.log
             traceback.print_exc()
-            error = TakoError("INTERNAL", repr(e))
+            error = IDMError("INTERNAL", repr(e))
         status.end("failed", error=error.to_dict())
     else:
         status.end("done", file=path, bytes=os.path.getsize(path))
 
 
 def _pause(signum, frame):
-    raise KeyboardInterrupt                           # `tako pause`: stop where we are
+    raise KeyboardInterrupt                           # `idm pause`: stop where we are
 
 
 class StatusReport(engine.Report):
@@ -177,6 +183,7 @@ class StatusReport(engine.Report):
 
     def __init__(self, job):
         self.job, self.size, self.window, self.written = job, None, [], 0.0
+        self.done = None                              # bytes on disk, the latest count
         job.set_status(state="downloading", pid=os.getpid(), started=time.time(),
                        error=None, trouble=None, note=None)
 
@@ -188,10 +195,11 @@ class StatusReport(engine.Report):
     def leftovers(self, why_discarded, have):
         note = f"starting over: {why_discarded}" if why_discarded else (
             f"resumed with {have:,} bytes already here" if have else None)
+        self.done = have
         self.job.set_status(bytes=have, note=note)
 
-    def progress(self, done):
-        now = time.time()
+    def progress(self, done, connections=1):
+        self.done, now = done, time.time()
         if now - self.written < 0.2:
             return
         self.written = now
@@ -199,7 +207,7 @@ class StatusReport(engine.Report):
         speed = self.speed()
         eta = round((self.size - done) / speed) if speed and self.size else None
         self.job.set_status(state="downloading", bytes=done, speed=round(speed), eta=eta,
-                            trouble=None)
+                            connections=connections, trouble=None)
 
     def retrying(self, error, wait):
         self.job.set_status(trouble={"code": error.code, "message": str(error), "retry_in": wait})
@@ -209,8 +217,8 @@ class StatusReport(engine.Report):
         return (b1 - b0) / (t1 - t0) if t1 > t0 else 0.0
 
     def end(self, state, **fields):
-        self.job.set_status(state=state, speed=0, eta=None, trouble=None, finished=time.time(),
-                            **fields)
+        self.job.set_status(state=state, speed=0, eta=None, trouble=None, connections=0,
+                            finished=time.time(), **{"bytes": self.done, **fields})
 
 
 # ---- small helpers -----------------------------------------------------------------------------
@@ -223,7 +231,7 @@ def read_json(path):
 
 
 def write_json(path, data):
-    """Write the whole file or nothing: readers (the face, `tako wait`) never see half of it."""
+    """Write the whole file or nothing: readers (the face, `idm wait`) never see half of it."""
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(data, f)

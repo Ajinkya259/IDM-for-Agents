@@ -1,0 +1,8 @@
+{
+  "name": "idm-for-agent",
+  "version": "0.5.0",
+  "description": "A download manager made for AI agents: the idm command (many connections, resume, clear errors with a next step) and halo, a face that shows the download live",
+  "author": {
+    "name": "Ajinkya259"
+  }
+}

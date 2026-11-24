@@ -1,6 +1,6 @@
 # Phase 2: a CLI that AI agents can rely on
 
-`tako` downloads files, and is built so an AI agent (Claude Code, Codex, Cursor...) can use it without anyone watching:
+`idm` downloads files, and is built so an AI agent (Claude Code, Codex, Cursor...) can use it without anyone watching:
 
 - **Every reply is one line of JSON.** It's short, so it costs few tokens.
 - **Every failure has a fixed code,** says whether trying again can help, and gives a hint saying what to do.
@@ -10,12 +10,12 @@
 People get readable text and a progress line instead of JSON.
 
 ```
-bin/tako get URL                 download it and wait (an agent gets a reply within 90 s)
-bin/tako start URL               start in the background and reply at once
-bin/tako wait ID [--max S]       wait for it to finish
-bin/tako status ID               how it's going right now
-bin/tako list                    every download
-bin/tako pause | resume | cancel ID
+bin/idm get URL                 download it and wait (an agent gets a reply within 90 s)
+bin/idm start URL               start in the background and reply at once
+bin/idm wait ID [--max S]       wait for it to finish
+bin/idm status ID               how it's going right now
+bin/idm list                    every download
+bin/idm pause | resume | cancel ID
 
 options for get / start:
   -o NAME   -d FOLDER   --header 'Name: value'   --cookies cookies.txt   --allow-page   --again
@@ -24,18 +24,18 @@ options for get / start:
 ## What an agent sees
 
 ```
-$ tako get https://example.com/big.iso
+$ idm get https://example.com/big.iso
 {"ok": true, "job": "3f9a1c", "state": "downloading", "file": "/Users/you/big.iso", "bytes": 52000000,
- "size": 700000000, "percent": 7, "speed": 4100000, "eta": 158, "next": "tako wait 3f9a1c"}
+ "size": 700000000, "percent": 7, "speed": 4100000, "eta": 158, "next": "idm wait 3f9a1c"}
 
-$ tako wait 3f9a1c
+$ idm wait 3f9a1c
 {"ok": true, "job": "3f9a1c", "state": "done", "file": "/Users/you/big.iso", "bytes": 700000000, "seconds": 171.2}
 
-$ tako get https://example.com/members/report.pdf
+$ idm get https://example.com/members/report.pdf
 {"ok": false, "job": "77b0e2", "state": "failed",
  "error": {"code": "AUTH_REQUIRED", "message": "the server said 403 Forbidden", "retryable": false,
            "hint": "The server wants a login. Ask the user for a cookies.txt file ..."},
- "next": "tako get https://example.com/members/report.pdf -d /Users/you --cookies <cookies.txt>"}
+ "next": "idm get https://example.com/members/report.pdf -d /Users/you --cookies <cookies.txt>"}
 ```
 
 **Exit codes:**
@@ -57,17 +57,17 @@ $ tako get https://example.com/members/report.pdf
 | `AUTH_REQUIRED` | 401, 403, 407 | no (`next` adds `--cookies`) |
 | `NOT_A_FILE` | the link is a web page, not a file | no (`next` adds `--allow-page`) |
 | `HTTP_ERROR` | any other 4xx | no |
-| `RATE_LIMITED` | 429, after tako's own retries | yes |
-| `SERVER_ERROR` | 5xx, after tako's own retries | yes |
+| `RATE_LIMITED` | 429, after idm's own retries | yes |
+| `SERVER_ERROR` | 5xx, after idm's own retries | yes |
 | `NETWORK` | offline, DNS, timeouts, a cut connection, after retries | yes |
 | `TLS` | the certificate can't be verified | no (tell the user) |
 | `FILE_CHANGED` | the file changed on the server mid-download | yes (starts over) |
 | `DISK_FULL`, `NO_PERMISSION`, `WRITE_FAILED` | our side | full: yes; the others: no |
 | `INTERRUPTED` | the background process died (killed, machine slept) | yes (resumes) |
 | `NO_SUCH_JOB` | an unknown job id | no |
-| `INTERNAL` | a bug in tako | no |
+| `INTERNAL` | a bug in idm | no |
 
-**Running the same command twice is safe.** `tako get URL` finds the earlier job for that link and folder:
+**Running the same command twice is safe.** `idm get URL` finds the earlier job for that link and folder:
 - **Still running:** it waits for that job.
 - **Paused or failed:** it carries on with it, using the new command's options. That's how adding `--cookies` fixes an `AUTH_REQUIRED`.
 - **Done:** it replies `"already": true`.
@@ -78,10 +78,10 @@ $ tako get https://example.com/members/report.pdf
 
 | File | What's in it |
 |---|---|
-| `tako/cli.py` | The commands, and what people and agents see. Start at `cmd_get()`. |
-| `tako/jobs.py` | Background jobs. Each one has a folder under `~/.tako/jobs/<id>/`. |
-| `tako/engine.py` | The download itself: phase 1's engine, now quiet and reporting through `Report`. |
-| `tako/errors.py` | The error codes, their hints, and `classify()`, which turns any exception into one. |
+| `idm/cli.py` | The commands, and what people and agents see. Start at `cmd_get()`. |
+| `idm/jobs.py` | Background jobs. Each one has a folder under `~/.idm/jobs/<id>/`. |
+| `idm/engine.py` | The download itself: phase 1's engine, now quiet and reporting through `Report`. |
+| `idm/errors.py` | The error codes, their hints, and `classify()`, which turns any exception into one. |
 
 A job's folder holds:
 - `job.json`: what to download.

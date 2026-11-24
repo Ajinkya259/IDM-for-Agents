@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A small local server that misbehaves on purpose, for testing tako.
+A small local server that misbehaves on purpose, for testing idm.
 
     python3 tests/testserver.py [--size MB] [--rate MB/s] [--port N]
                                 [--drop MB] [--busy N] [--no-ranges] [--version N]
@@ -34,7 +34,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.route()
         except (BrokenPipeError, ConnectionResetError):
-            pass                                            # the client hung up (tako's probe does)
+            pass                                            # the client hung up (idm's probe does)
 
     def route(self):
         route = self.path.split("?")[0]

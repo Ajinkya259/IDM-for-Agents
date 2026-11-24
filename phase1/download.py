@@ -34,7 +34,7 @@ from typing import Optional
 CHUNK = 64 * 1024                                   # read and write 64 KB at a time
 TIMEOUT = 30                                        # silent for 30 s = the connection is dead
 TRIES = 8                                           # failures in a row before giving up
-USER_AGENT = "Mozilla/5.0 (compatible; tako/0.1)"   # some servers refuse Python's default one
+USER_AGENT = "Mozilla/5.0 (compatible; idm-for-agent/0.1)"  # some servers refuse Python's default one
 LIVE = sys.stdout.isatty()                          # draw a live progress line?
 
 
