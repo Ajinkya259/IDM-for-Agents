@@ -84,7 +84,7 @@ bin/idm watch ID                that one, until it ends (a link works too)
 
 Ctrl+C in `get` pauses the download. In `wait` or `watch` it only stops watching.
 
-**In Claude Code.** While the agent runs `idm get` or `idm wait`, halo plays under its command. (To try a copy without installing it: `claude --plugin-dir ~/Desktop/untitled/IDM/phase5`.)
+**In Claude Code.** While the agent runs `idm get` or `idm wait`, halo plays under its command. (To try it without installing: `claude --plugin-dir .` in a clone.)
 
 ```
 the agent runs:   idm get https://…/100Mb.dat
@@ -116,7 +116,7 @@ The colours are the "lavender" set picked from `mockups/experiments.py`. The loo
 
 ## Many connections (from phase 3)
 
-A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3](../phase3/README.md#how-it-works) for the diagram.
+A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3's notes](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase3/README.md#how-it-works) for the diagram.
 
 New in phase 5: when the server pushes back, an extra connection hands its piece to the others, **rests (1, 2, 4… s) and comes back**, rather than leaving for good. idm's first request now asks for one byte, so it doesn't hold a place the server could give a real connection. On a server that allows 2 connections at once, 8 MB went from 8.5 s to 5.3 s.
 

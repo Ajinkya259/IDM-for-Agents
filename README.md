@@ -30,7 +30,7 @@ The person beside the agent sees the download as halo: a face inside a ring of 3
 
 *A dead link: idm's `NOT_FOUND` message and hint, under a sad face.*
 
-The halo GIFs are rendered from [`phase5/idm/halo.py`](phase5/idm/halo.py), the same code that draws halo in a terminal and in Claude Code, fed made-up status over time. The agent spends no tokens on halo: it still gets its one line of JSON, and the face is drawn beside it from the job's `status.json`.
+The halo GIFs are rendered from [`idm/halo.py`](idm/halo.py), the same code that draws halo in a terminal and in Claude Code, fed made-up status over time. The agent spends no tokens on halo: it still gets its one line of JSON, and the face is drawn beside it from the job's `status.json`.
 
 ## Install in Claude Code
 
@@ -44,17 +44,16 @@ claude plugin install idm-for-agent@idm-for-agent
 Or try it from a clone, without installing:
 
 ```
-claude --plugin-dir phase5
+claude --plugin-dir .
 ```
 
-Then ask: "download this: https://...". The plugin is the [phase5](phase5/) folder. It puts `idm` on the agent's PATH, adds a skill that teaches the agent when to use it and what to do for each error code, and adds the halo mod.
+Then ask: "download this: https://...". This repo is the plugin. It puts `idm` on the agent's PATH, adds a skill that teaches the agent when to use it and what to do for each error code, and adds the halo mod.
 
 It needs Python 3.9 or newer and nothing else. It's tested on macOS with Python 3.9 and 3.14.
 
 ## Use it from a terminal
 
 ```
-cd phase5
 bin/idm get URL                 download it and wait (an agent gets a reply within 90 s)
 bin/idm start URL               start in the background and reply at once
 bin/idm wait ID [--max S]       wait for it to finish
@@ -88,11 +87,11 @@ $ idm get https://example.com/members/report.pdf
 - **Exit codes:** 0 fine, 1 failed, 2 the command itself was wrong, 3 failed but worth retrying (run `next`).
 - **Running the same command twice is safe.** `idm get URL` finds the earlier job for that link and folder: it waits for it, carries on with it, or replies `"already": true`. `--again` forces a fresh download.
 
-The full table of error codes, when each happens and whether it's retryable, is in [phase5/README.md](phase5/README.md#the-error-codes).
+The full table of error codes, when each happens and whether it's retryable, is in [docs/GUIDE.md](docs/GUIDE.md#the-error-codes).
 
 ## The eval
 
-[`phase5/eval/run_eval.py`](phase5/eval/run_eval.py) runs Claude Code on its own (`claude -p`), the way τ-bench tests agents. Each run is a real agent in an empty folder, asked "Download this for me: URL", while a local server misbehaves in one set way. A program grades how it ended: is the right file on disk, byte for byte, or, where there is no file to get, was the user told why? Each scenario runs with idm and with plain tools (curl, wget...).
+[`eval/run_eval.py`](eval/run_eval.py) runs Claude Code on its own (`claude -p`), the way τ-bench tests agents. Each run is a real agent in an empty folder, asked "Download this for me: URL", while a local server misbehaves in one set way. A program grades how it ended: is the right file on disk, byte for byte, or, where there is no file to get, was the user told why? Each scenario runs with idm and with plain tools (curl, wget...).
 
 Results (Sonnet, 7 scenarios, both ways, 2 trials each, run twice):
 
@@ -107,7 +106,7 @@ Results (Sonnet, 7 scenarios, both ways, 2 trials each, run twice):
 | big | 10 MB from a slow server that allows 2 connections | 4/4, **112 s** | 4/4, 207 s |
 | **total** | | **28/28** | **26/28** |
 
-A strong model with curl gets there most of the time. Its failures are the quiet kind: an error reply saved under the file's name, reported as success. idm's replies make that impossible to miss, and its connections make the slow server about twice as fast. More in [phase5/README.md](phase5/README.md#the-eval).
+A strong model with curl gets there most of the time. Its failures are the quiet kind: an error reply saved under the file's name, reported as success. idm's replies make that impossible to miss, and its connections make the slow server about twice as fast. More in [docs/GUIDE.md](docs/GUIDE.md#the-eval).
 
 ## How it works
 
@@ -115,28 +114,27 @@ A strong model with curl gets there most of the time. Its failures are the quiet
 - **Resume.** The `.part.json` notes list the pieces still missing, so a pause, a crash or a cut connection carries on exactly where it was. 429s, 5xx and network errors are retried with waits before idm gives up with a code.
 - **ETag checks.** Every piece is checked against the file's ETag. If the file changes on the server mid-download, idm says `FILE_CHANGED` instead of saving a mix of two versions.
 - **Background jobs.** Each download is a job with its own folder under `~/.idm/jobs/<id>/`, run by a worker process that rewrites `status.json` about 5 times a second. `idm get` replies within 90 s; `idm wait` picks up from there.
-- **halo in Claude Code.** The plugin's mod ([`phase5/hooks/halo.tsx`](phase5/hooks/halo.tsx)) watches for `idm get` and `idm wait`, starts `idm watch --cells`, and paints each frame under the command.
+- **halo in Claude Code.** The plugin's mod ([`hooks/halo.tsx`](hooks/halo.tsx)) watches for `idm get` and `idm wait`, starts `idm watch --cells`, and paints each frame under the command.
 
-## Phases
+## How it was built
 
-The project is built one phase at a time, and each phase keeps its own folder, so you can read how it grew.
+One phase at a time, each tested before the next. Each phase's own code and notes are kept in the history ([phases 1 to 5 as they were](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106)); the code here is the latest.
 
 | Phase | What | State |
 |---|---|---|
-| [phase1](phase1/) | One connection, done properly: Range requests, `.part` files, resume, retries, changed-file detection | done, 20 tests |
-| [phase2](phase2/) | The agent contract: the `idm` CLI, JSON replies, error codes and hints, background jobs | done, 55 tests |
-| [phase3](phase3/) | Many connections at once, and "take half of the biggest piece left" (the trick that makes IDM fast) | done, 68 tests |
-| [phase4](phase4/) | halo, the face: in the terminal (`idm get`, `idm watch`), and live under the agent's command in Claude Code | done, 87 tests + 4 for the mod |
-| [phase5](phase5/) | The Claude Code plugin (idm on the agent's PATH, a skill, halo), a τ-bench-style eval, and a critic's review, fixed | done, 100 tests + 5 for the mod |
-| phase6 | Scheduling, a queue, a speed limit | in progress |
+| [1](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase1) | One connection, done properly: Range requests, `.part` files, resume, retries, changed-file detection | done, 20 tests |
+| [2](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase2) | The agent contract: the `idm` CLI, JSON replies, error codes and hints, background jobs | done, 55 tests |
+| [3](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase3) | Many connections at once, and "take half of the biggest piece left" (the trick that makes IDM fast) | done, 68 tests |
+| [4](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase4) | halo, the face: in the terminal (`idm get`, `idm watch`), and live under the agent's command in Claude Code | done, 87 tests + 4 for the mod |
+| [5](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase5) | The Claude Code plugin (idm on the agent's PATH, a skill, halo), a τ-bench-style eval, and a critic's review, fixed | done, 100 tests + 5 for the mod |
+| 6 | Scheduling, a queue, a speed limit | in progress |
 
 ```
-cd phase5
 python3 tests/run_tests.py      # 100 checks: every command, every error code, the pieces, halo
 claude plugin test .            # the mod: which commands it watches, the face under them
 ```
 
-[mockups](mockups/) has the UI experiments that led to halo.
+The UI experiments that led to halo are in the history too ([mockups](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/mockups)).
 
 ## Status
 

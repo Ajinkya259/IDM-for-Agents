@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "idm-for-agent",
-      "source": "./phase5",
+      "source": "./",
       "description": "A download manager made for AI agents, with halo, the download face"
     }
   ]
