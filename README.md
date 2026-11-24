@@ -1,55 +1,114 @@
 # IDM for Agents
 
-A download manager made for AI agents: files (Google Drive, Dropbox and OneDrive links too), and videos from YouTube, Instagram and more. `idm` gives an agent one line of JSON per step, a fixed error code with the exact command to run next, and never saves an error page as your file. Written from scratch in Python 3.9+, with nothing else to install.
+A download manager for AI agents. The agent runs `idm get URL` and gets one line of JSON back: the file's path, or an error code with the command to run next.
 
-<img src="docs/halo-download.gif" width="560" alt="halo during a download: a lavender face inside a ring of 32 dots. The dots fly home one by one as the percent rises, the caption shows MB done, speed, 8 connections and time left, and at 100% the face cheers.">
+It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hugging Face) and videos (YouTube, Instagram, TikTok and more). It needs Python 3.9+ and has no dependencies.
+
+<img src="docs/halo-download.gif" width="560" alt="halo, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
 
 ## Install
 
-As a command, for any agent or terminal:
+**Command line**, for any agent or terminal:
 
 ```
 pipx install git+https://github.com/Ajinkya259/IDM-for-Agents
 ```
 
-As a Claude Code plugin, which adds a skill (when to use idm, what to do on each error) and halo, the face above, under every download:
+`uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents` works too. Videos also need yt-dlp: `brew install yt-dlp ffmpeg`.
+
+**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and halo under each download. Inside Claude Code:
 
 ```
-/plugin install idm-for-agents --marketplace Ajinkya259/IDM-for-Agents
+/plugin marketplace add Ajinkya259/IDM-for-Agents
+/plugin install idm-for-agents@idm-for-agents
 ```
 
-## Use
+Or from a terminal:
 
 ```
-$ idm get https://example.com/big.iso -d ~/Downloads
+claude plugin install idm-for-agents --marketplace Ajinkya259/IDM-for-Agents
+```
+
+## How it works
+
+1. The agent runs `idm get URL`.
+2. idm downloads the file in the background:
+   - A share link is first turned into the file's own link, and a video goes through yt-dlp.
+   - It uses up to 16 connections (8 by default).
+   - It resumes after any stop.
+   - It checks every piece against the file's ETag, so a file that changes mid-download fails with `FILE_CHANGED` instead of being saved as a mix.
+3. Within 90 seconds, the agent gets one line of JSON:
+   - **Done:** the file's path.
+   - **Still going:** `next` is `idm wait ID`.
+   - **Failed:** one of 18 error codes, a `hint`, and in `next` the command to run.
+
+idm never saves an error page as the file.
+
+```
+$ idm get https://example.com/big.iso
 {"ok": true, "job": "3f9a1c", "state": "downloading", "percent": 7, "eta": 158, "next": "idm wait 3f9a1c"}
 
-idm get https://youtu.be/ID       a video (Instagram reels, TikTok, X... too); --audio for the sound
-idm get SHARE_LINK                Google Drive or Docs, Dropbox, OneDrive, GitHub, Hugging Face: as given
-idm start URL --at 02:00          start at 2 am (or --in 2h)
-idm start URL --after 3f9a1c      start once that download has ended
-idm start URL --limit 2M          at most 2 MB a second (idm limit ID changes it as it runs)
-idm wait | status | pause | resume | cancel ID      idm list      idm watch
+$ idm get https://example.com/members/report.pdf
+{"ok": false, "job": "77b0e2", "state": "failed",
+ "error": {"code": "AUTH_REQUIRED", "message": "the server said 403 Forbidden", "retryable": false, "hint": "..."},
+ "next": "idm get https://example.com/members/report.pdf -d /Users/you --cookies <cookies.txt>"}
 ```
 
-Watching in a terminal, space pauses and resumes, and q leaves it running. Videos need [yt-dlp](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp ffmpeg`).
+Exit codes: 0 means fine, 1 failed, 2 a bad command, and 3 failed but worth retrying (run `next`).
 
-<img src="docs/halo-in-claude-code.gif" width="720" alt="A Claude Code session. The user says: download this. The agent loads the idm skill and runs idm get; halo fills its ring under the command, then the command returns one JSON object and the agent tells the user where the file is.">
+<img src="docs/halo-in-claude-code.gif" width="720" alt="A Claude Code session: the user says download this, the agent runs idm get, halo fills under the command, and the agent gets one line of JSON.">
 
-## What it does for an agent
+## Commands
 
-- **Clear failures.** 18 error codes (`NOT_FOUND`, `AUTH_REQUIRED`, `RATE_LIMITED`...), each with a `hint` and, where there is one, `next`: the exact command to run.
-- **Fast and safe.** Up to 16 connections on one file, resume after any stop, and an ETag check on every piece, so a file that changes mid-download is never saved as a mix.
-- **Never cut off.** Big downloads run in the background; `idm get` replies within 90 seconds and `idm wait` picks up from there.
-- **Patient, not stuck.** A silent server shows up as `stalled`, and after 2 minutes with no byte idm stops and says so.
+```
+idm get URL [-d FOLDER]          download and wait (replies within 90 s)
+idm get URL --audio              a video's sound only
+idm start URL                    start in the background, reply at once
+idm start URL --at 02:00         start at 2 am (or --in 2h)
+idm start URL --after ID         start when that download ends
+idm start URL --limit 2M         at most 2 MB/s
+idm wait | status | pause | resume | cancel ID
+idm limit ID SPEED               change the speed limit while it runs (0: none)
+idm watch [ID]                   show halo (no ID: every download)
+idm list                         every download
+```
+
+These options work on `get` and `start`:
+
+| Option | Does |
+|---|---|
+| `--cookies FILE` | send browser cookies, for a site that needs a login |
+| `--header 'NAME: VALUE'` | send an extra request header |
+| `-o NAME` | save under this file name |
+| `--connections N` | use 1 to 16 connections |
+
+## Keyboard shortcuts
+
+These work while `idm get`, `idm wait` or `idm watch` shows a download in your terminal:
+
+| Key | Does |
+|---|---|
+| `space` | pause, or resume |
+| `p` | pause |
+| `r` | resume (a failed download too) |
+| `q` | stop watching; the download keeps going in the background |
+| `Ctrl+C` | in `idm get`: pause the download. In `idm wait` or `idm watch`: stop watching |
+
+They only work in a terminal, not when an agent runs idm.
 
 ## Tested
 
-156 checks in `tests/run_tests.py`, and an eval in which real Claude Code agents download from a server that misbehaves on purpose. With idm, 28 of 28 runs got the right file or told the user why; with plain curl, 26 of 28 (twice it saved the server's error reply as the file and called it done). On a slow server, idm took 112 s where curl took 207 s.
+`python3 tests/run_tests.py` runs 165 checks.
 
-## More
+In an eval, real Claude Code agents downloaded from a server that fails on purpose:
 
-- [docs/GUIDE.md](docs/GUIDE.md): everything in detail. Covers the agent contract, every error code, halo, the queue, the eval and how the code is laid out.
-- How it was built: one phase at a time, each tested before the next ([phases 1 to 5 as they were](https://github.com/Ajinkya259/IDM-for-Agents/tree/f5c8106)).
+| | Runs that ended right | 10 MB from a slow server |
+|---|---|---|
+| With idm | 28 of 28 | 112 s |
+| With curl | 26 of 28 | 207 s |
 
-Private for now. No license yet.
+Both curl misses saved the server's error reply as the file.
+
+[docs/GUIDE.md](docs/GUIDE.md) covers every error code, halo, the queue, the eval and the code layout.
+
+The repo is private for now, and it has no license yet.
