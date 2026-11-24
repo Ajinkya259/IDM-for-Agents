@@ -2,7 +2,8 @@
 """
 Tests for idm: every command, every error code, the background jobs, downloading in pieces
 over many connections, halo (in a terminal, and as cells for Claude Code), what a critic
-found broken, and phase 6: scheduling, the waiting line, speed limits and silent servers.
+found broken, phase 6 (scheduling, the waiting line, speed limits, silent servers),
+phase 7 (videos) and phase 8 (share links: Drive, Dropbox, OneDrive, GitHub, Hugging Face).
 
     python3 tests/run_tests.py          (about 90 seconds; uses free local ports)
     python3 tests/run_tests.py pause    (only the tests with "pause" in their name)
@@ -14,6 +15,7 @@ import base64
 import datetime
 import fcntl
 import hashlib
+import io
 import json
 import os
 import pty
@@ -36,7 +38,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 IDM = [sys.executable, str(HERE.parent / "bin" / "idm")]
 sys.path.insert(0, str(HERE.parent))
-from idm import halo, when  # noqa: E402  (needs the path above)
+from idm import engine, halo, jobs, shares, when  # noqa: E402  (needs the path above)
+from idm.errors import IDMError  # noqa: E402
 from idm.crew import MIN_PIECE, Missing  # noqa: E402
 TESTS, RESULTS = [], []
 LEFTOVERS = []                     # servers and sandboxes to clean up after each test, pass or fail
@@ -1189,6 +1192,160 @@ def person_sees_the_keys_under_halo():
     srv, box = Server(size=3, rate=0.5), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, keys=((1, "q"),))
     check("the keys are written under the face", "space pause" in shown, shown[-300:])
+
+# ---- phase 8: share links (Drive, Dropbox, OneDrive, GitHub, Hugging Face) ------------------------
+def drive_file(file_id, extra=""):
+    return f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t{extra}"
+
+
+class FakeSite:
+    """An opener that answers like the sites do, without the internet: the first `replies`
+    key a request's link starts with gives the reply (its body, and where it ended up)."""
+
+    def __init__(self, replies):
+        self.replies, self.asked = replies, []
+
+    def open(self, req, timeout=None):
+        url = req if isinstance(req, str) else req.full_url
+        self.asked.append(req)
+        body, landed = next(reply for start, reply in self.replies.items() if url.startswith(start))
+        return FakeReply(body, landed or url)
+
+
+class FakeReply(io.BytesIO):
+    def __init__(self, body, url):
+        super().__init__(body.encode())
+        self.url = url
+
+    def geturl(self):
+        return self.url
+
+
+def shared(url, site=None):
+    """What idm downloads for this link: (the link, the name), or the IDMError it raises."""
+    try:
+        job = shares.the_file(site, jobs.Job(id="t", url=url, folder="/tmp"))
+        return job.url, job.name
+    except IDMError as e:
+        return e
+
+
+def failed_with(e, code):
+    return isinstance(e, IDMError) and e.code == code
+
+
+@test
+def share_links_point_at_the_file():
+    cases = {
+        "https://drive.google.com/file/d/1AbC_d-9/view?usp=sharing": (drive_file("1AbC_d-9"), None),
+        "https://drive.google.com/open?id=1AbC": (drive_file("1AbC"), None),
+        "https://drive.google.com/uc?id=1AbC&export=download": (drive_file("1AbC"), None),
+        "https://drive.google.com/file/d/1AbC/view?resourcekey=0-k": (drive_file("1AbC", "&resourcekey=0-k"), None),
+        "https://docs.google.com/document/d/1Doc/edit": ("https://docs.google.com/document/d/1Doc/export?format=docx", None),
+        "https://docs.google.com/spreadsheets/d/1Sh/edit#gid=0": ("https://docs.google.com/spreadsheets/d/1Sh/export?format=xlsx", None),
+        "https://docs.google.com/presentation/d/1Sl/edit": ("https://docs.google.com/presentation/d/1Sl/export?format=pptx", None),
+        "https://www.dropbox.com/scl/fi/abc/data%20set.zip?rlkey=k1&dl=0":
+            ("https://www.dropbox.com/scl/fi/abc/data%20set.zip?rlkey=k1&dl=1", "data set.zip"),
+        "https://www.dropbox.com/s/abc/figure.zip?dl=0": ("https://www.dropbox.com/s/abc/figure.zip?dl=1", "figure.zip"),
+        "https://github.com/o/r/blob/main/data/a.zip": ("https://github.com/o/r/raw/main/data/a.zip", None),
+        "https://huggingface.co/o/m/blob/main/model.safetensors": ("https://huggingface.co/o/m/resolve/main/model.safetensors", None),
+        "https://huggingface.co/datasets/o/d/blob/main/train.parquet": ("https://huggingface.co/datasets/o/d/resolve/main/train.parquet", None),
+        "https://example.com/a.zip": ("https://example.com/a.zip", None),
+    }
+    wrong = {link: shared(link) for link, want in cases.items() if shared(link) != want}
+    check("Drive, Docs, Dropbox, GitHub and Hugging Face links point at the file itself "
+          "(other links stay as they are)", not wrong, wrong)
+    e = shared("https://www.dropbox.com/scl/fi/abc/data.zip?dl=0")
+    check("a Dropbox link that lost its rlkey: BAD_URL, saying so",
+          failed_with(e, "BAD_URL") and "rlkey" in str(e), e)
+
+
+@test
+def a_drive_folder_lists_its_files():
+    page = ('<div class="flip-entry"><a href="https://drive.google.com/file/d/1One/view?usp=drive_web">a.zip</a></div>'
+            '<div class="flip-entry"><a href="https://drive.google.com/file/d/1Two/view?usp=drive_web">b.zip</a></div>'
+            '<div class="flip-entry"><a href="https://drive.google.com/drive/folders/1Sub">more</a></div>')
+    e = shared("https://drive.google.com/drive/folders/1Folder?usp=sharing",
+               FakeSite({"https://drive.google.com/embeddedfolderview?id=1Folder": (page, None)}))
+    check("a Drive folder: NOT_A_FILE, with the links of what's in it",
+          failed_with(e, "NOT_A_FILE") and e.more.get("links") == [
+              "https://drive.google.com/file/d/1One", "https://drive.google.com/file/d/1Two",
+              "https://drive.google.com/drive/folders/1Sub"], e)
+    e = shared("https://drive.google.com/drive/folders/1Private",
+               FakeSite({"https://drive.google.com/": ("<form>Sign in</form>", "https://accounts.google.com/v3/signin")}))
+    check("a folder that isn't shared with everyone: AUTH_REQUIRED", failed_with(e, "AUTH_REQUIRED"), e)
+
+
+@test
+def a_onedrive_link_gets_a_guest_pass():
+    link = "https://1drv.ms/u/s!AkSx?e=cUG"
+    item = {"name": "weights.pth", "@content.downloadUrl": "https://my.microsoftpersonalcontent.com/download.aspx?tempauth=x"}
+    site = FakeSite({shares.ONEDRIVE_PASS: ('{"token": "guest-1"}', None),
+                     "https://my.microsoftpersonalcontent.com/": (json.dumps(item), None)})
+    got = shared(link, site)
+    share_id = base64.urlsafe_b64encode(link.encode()).decode().rstrip("=")
+    asked = site.asked[-1]
+    check("OneDrive: a guest pass, then the file's own link and name", got == (
+        item["@content.downloadUrl"], "weights.pth") and f"/shares/u!{share_id}/" in asked.full_url
+        and asked.get_header("Authorization") == "Badger guest-1", (got, asked.full_url))
+    site.replies["https://my.microsoftpersonalcontent.com/"] = ('{"name": "Photos", "folder": {}}', None)
+    check("a OneDrive folder: NOT_A_FILE", failed_with(shared(link, site), "NOT_A_FILE"))
+
+
+@test
+def a_share_link_resumes_though_its_file_link_changes():
+    srv, box = Server(size=4), Sandbox()
+    box.dl.mkdir(parents=True)
+    given, passes = "https://share.example/s/abc", []
+
+    def share_site(opener, url):                      # like OneDrive: a new pass, a new link, each time
+        passes.append(len(passes) + 1)
+        return srv.url(f"/test.bin?pass={passes[-1]}"), "shared.bin"
+
+    pattern = bytes((i + 1) % 251 for i in range(251))
+    (box.dl / "shared.bin.part").write_bytes((pattern * 4000)[:1_000_000])     # from last time
+    (box.dl / "shared.bin.part.json").write_text(json.dumps(
+        {"url": given, "size": 4_000_000, "fingerprint": '"test-v1"'}))
+
+    class Seen(engine.Report):
+        def leftovers(self, why_discarded, have):
+            self.kept = (why_discarded, have)
+
+    seen, sites = Seen(), shares.SITES
+    shares.SITES = (*sites, ("share.example", share_site))
+    try:
+        saved = engine.download(jobs.Job(id="t", url=given, folder=str(box.dl), connections=4), seen)
+    finally:
+        shares.SITES = sites
+    check("a share link whose file link changes each time (OneDrive's): the bytes from last "
+          "time are kept (they belong to the link as given), and the file is right",
+          seen.kept == (None, 1_000_000) and saved == str(box.dl / "shared.bin")
+          and sha(box.dl / "shared.bin") == srv.sha(), (getattr(seen, "kept", None), saved))
+
+
+@test
+def a_link_that_ends_at_a_sign_in_page():
+    srv, box = Server(), Sandbox()
+    code, r = box.get(srv.url("/redirect?to=" + srv.url("/login")))
+    check("redirected to a sign-in page: AUTH_REQUIRED (not just a web page)",
+          code != 0 and r.get("error", {}).get("code") == "AUTH_REQUIRED", r)
+
+
+@test
+def the_servers_full_file_name_wins():
+    from email.message import Message
+
+    def named(header):
+        reply = FakeReply("", "https://x.org/download?id=1")
+        reply.headers = Message()
+        reply.headers["Content-Disposition"] = header
+        return engine.pick_name(reply)
+
+    full = "attachment; filename=\"ExampleSheet.xlsx\"; filename*=UTF-8''Example%20Sheet.xlsx"
+    check("filename*= (spaces, any language) wins over the plain filename= for old browsers",
+          named(full) == "Example Sheet.xlsx" and named("attachment; filename*=UTF-8''caf%C3%A9.pdf")
+          == "café.pdf" and named('attachment; filename="plain.zip"') == "plain.zip",
+          [named(full)])
 
 
 def main():

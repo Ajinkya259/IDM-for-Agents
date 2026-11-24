@@ -63,6 +63,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/redirect":
             to = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("to", [""])[0]
             return self.reply(302, b"", {"Location": to})
+        if route == "/login":                               # where a private share link ends up
+            return self.reply(200, b"<html><body><form>Sign in</form></body></html>",
+                              {"Content-Type": "text/html; charset=utf-8"})
         if route == "/page.html":
             return self.reply(200, b"<html><body>Click <a href='/test.bin'>here</a></body></html>",
                               {"Content-Type": "text/html; charset=utf-8"})

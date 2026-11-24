@@ -133,6 +133,28 @@ What yt-dlp says when it fails becomes one of idm's codes: a removed or private 
 
 yt-dlp needs installing (`brew install yt-dlp ffmpeg`, or `pipx install yt-dlp`); everything else in idm is the standard library. What you may download is up to each site's terms and the video's owner.
 
+## Share links: Google Drive, Dropbox, OneDrive and more
+
+Sharing a file on Drive or Dropbox gives a link to a page that shows the file with a Download button, not a link to the file. Each site has its own way from that page to the file, so idm takes it before downloading:
+
+| The link you're given | What idm downloads |
+|---|---|
+| `drive.google.com/file/d/ID/view` (or `open?id=`, `uc?id=`) | `drive.usercontent.google.com/download?id=ID&confirm=t`, which skips the "can't scan this file for viruses" page big files get |
+| `docs.google.com/document/d/ID/edit` | its export: Docs as `.docx`, Sheets as `.xlsx`, Slides as `.pptx` (the first choice in File > Download). For a PDF, give idm `.../export?format=pdf` |
+| `dropbox.com/scl/fi/.../data.zip?rlkey=...&dl=0` | the same with `dl=1`. Dropbox calls every file "unspecified", so the name comes from the link |
+| `1drv.ms/u/s!...` (OneDrive) | OneDrive's own download link. OneDrive sends a shared file only to someone signed in or holding a guest pass, which its page gets for every visitor; idm gets one the same way |
+| `github.com/o/r/blob/main/a.zip` | `github.com/o/r/raw/main/a.zip` |
+| `huggingface.co/o/r/blob/main/model.bin` | `huggingface.co/o/r/resolve/main/model.bin` (models, datasets and spaces) |
+
+These files are then downloaded like any other: many connections, pause and resume, the queue, the limit and halo. The job keeps the link as it was given, which is what `idm list` shows and what a resume is matched by. That matters for OneDrive, whose download link changes every time.
+
+- **A folder** isn't one file. A Drive folder fails with `NOT_A_FILE` and `links` (the files and folders in it, up to 50), as a playlist does. A OneDrive folder fails with `NOT_A_FILE`, asking for the file's own link.
+- **Not shared with everyone?** The site sends a sign-in page; idm says `AUTH_REQUIRED` (for any link that ends at a sign-in page, not just these).
+- **Gone?** `NOT_FOUND`.
+- **A Dropbox link missing its `rlkey=`** (the part that opens it to others) is `BAD_URL`, saying so.
+
+Tried on real links: a 500 MB Drive file (8 connections, paused and resumed), a 2.4 GB Dropbox zip, a 124 MB OneDrive file (paused, resumed with a new link and carried on; its SHA-1 matches OneDrive's), Google's sample Doc, Sheet and Slides, a GitHub file and a 123 MB Hugging Face zip (its SHA-256 matches). Not covered: MEGA (it encrypts files, so it needs its own tool), WeTransfer and Box.
+
 ## Later, in order, and not too fast
 
 A download doesn't have to start now. Its worker starts at once, but waits its turn in the background before the first byte:
@@ -264,6 +286,7 @@ $ idm get https://example.com/members/report.pdf
 | `idm/errors.py` | The error codes, their hints, `classify()` (any exception as a code), and the retry waits. |
 | `idm/when.py` | Times and speeds: reads `--at`, `--in` and `--limit`, and says times the way people do. |
 | `idm/video.py` | Videos: hands video-site links to yt-dlp and reads its progress; its failures as idm's codes. |
+| `idm/shares.py` | Share links: turns a Drive, Docs, Dropbox, OneDrive, GitHub or Hugging Face link into the file's own link. |
 | `hooks/halo.tsx` | The Claude Code mod. It starts `idm watch --cells` for the agent's command and paints the frames. |
 | `.claude-plugin/` | `plugin.json` makes the repo a Claude Code plugin; `marketplace.json`, a marketplace of one. |
 | `pyproject.toml` | Makes `idm` a command you can install with pipx or pip. |

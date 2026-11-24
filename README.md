@@ -1,6 +1,6 @@
 # IDM for Agents
 
-A download manager made for AI agents: files, and videos from YouTube, Instagram and more. `idm` gives an agent one line of JSON per step, a fixed error code with the exact command to run next, and never saves an error page as your file. Written from scratch in Python 3.9+, with nothing else to install.
+A download manager made for AI agents: files (Google Drive, Dropbox and OneDrive links too), and videos from YouTube, Instagram and more. `idm` gives an agent one line of JSON per step, a fixed error code with the exact command to run next, and never saves an error page as your file. Written from scratch in Python 3.9+, with nothing else to install.
 
 <img src="docs/halo-download.gif" width="560" alt="halo during a download: a lavender face inside a ring of 32 dots. The dots fly home one by one as the percent rises, the caption shows MB done, speed, 8 connections and time left, and at 100% the face cheers.">
 
@@ -25,6 +25,7 @@ $ idm get https://example.com/big.iso -d ~/Downloads
 {"ok": true, "job": "3f9a1c", "state": "downloading", "percent": 7, "eta": 158, "next": "idm wait 3f9a1c"}
 
 idm get https://youtu.be/ID       a video (Instagram reels, TikTok, X... too); --audio for the sound
+idm get SHARE_LINK                Google Drive or Docs, Dropbox, OneDrive, GitHub, Hugging Face: as given
 idm start URL --at 02:00          start at 2 am (or --in 2h)
 idm start URL --after 3f9a1c      start once that download has ended
 idm start URL --limit 2M          at most 2 MB a second (idm limit ID changes it as it runs)

@@ -6,6 +6,7 @@ download it at once, each on its own piece (crew.py).  When it can't, one connec
 the whole file, as in phase 2.  The engine doesn't print: it tells a `report` object what is
 happening (so the caller decides how to show it), and every failure is an IDMError with a code.
 """
+import email.utils
 import http.client
 import http.cookiejar
 import json
@@ -20,7 +21,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Optional
 
-from . import __version__
+from . import __version__, shares
 from .crew import Crew
 from .errors import AUTO_RETRY, TRIES, IDMError, backoff, classify, gave_up, out_of_patience
 
@@ -53,23 +54,23 @@ def download(job, report):
     """Download job.url into job.folder and return the saved file's path.  Raises IDMError when
     it fails, and KeyboardInterrupt when paused (the .part file stays, to resume from)."""
     opener, limit = make_opener(job), Limit(job)
-    remote = with_retries(lambda: probe(opener, job), report)            # 1. what is this file?
-    part = PartFile(job.folder, job.name or remote.name, job.url)        # 2. where does it go?
+    file = with_retries(lambda: shares.the_file(opener, job), report)    # 1. a share link? the file's
+    remote = with_retries(lambda: probe(opener, file), report)           # 2. what is this file?
+    part = PartFile(job.folder, file.name or remote.name, job.url)       # 3. where does it go?
     report.found(remote, part)
-    report.leftovers(part.keep_or_discard(remote), part.have())          # 3. anything from last time?
-    if remote.splittable:                                                # 4. get the missing bytes:
-        fetch_in_pieces(opener, job, remote, part, report, limit)        #    many connections at once,
+    report.leftovers(part.keep_or_discard(remote), part.have())          # 4. anything from last time?
+    if remote.splittable:                                                # 5. get the missing bytes:
+        fetch_in_pieces(opener, file, remote, part, report, limit)       #    many connections at once,
     else:                                                                #    or one, start to end
-        with_retries(lambda: fetch_rest(opener, job, remote, part, report, limit), report,
+        with_retries(lambda: fetch_rest(opener, file, remote, part, report, limit), report,
                      progress=part.have)
-    return part.finish()                                                 # 5. NAME.part -> NAME
+    return part.finish()                                                 # 6. NAME.part -> NAME
 
 
 @dataclass
 class Remote:
     """What the server told us about the file."""
-    url: str
-    name: str                     # its file name
+    name: str                    # its file name
     size: Optional[int]           # in bytes; None if the server won't say
     can_resume: bool              # it answered our Range request with 206 (just that part)
     fingerprint: Optional[str]    # ETag or Last-Modified: changes when the file changes
@@ -92,8 +93,11 @@ def probe(opener, job):
         resp = e                                       # 416 "there is no byte 0": an empty file
     with resp:
         page = resp.headers.get_content_type() in PAGE_TYPES and not job.allow_page
-        remote = Remote(url=job.url, name=pick_name(resp), size=total_size(resp),
+        remote = Remote(name=pick_name(resp), size=total_size(resp),
                         can_resume=resp.status in (206, 416), fingerprint=fingerprint(resp))
+    if page and shares.sign_in_page(resp.geturl()):
+        raise IDMError("AUTH_REQUIRED", "the link leads to a sign-in page: it isn't shared with "
+                                        "everyone")
     if page:
         raise IDMError("NOT_A_FILE", "the link opens a web page, not a file",
                        links=links_on_page(opener, job))
@@ -336,15 +340,24 @@ def fingerprint(resp):
 
 
 def pick_name(resp):
-    """The server's name for the file (Content-Disposition, which the email parser reads in
-    all its forms), or else the last part of the link.  Made safe to save under."""
-    name = resp.headers.get_filename() or \
+    """The server's name for the file (Content-Disposition), or else the last part of the
+    link.  Made safe to save under."""
+    name = server_name(resp) or \
         urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(resp.geturl()).path))
     name = re.sub(r"[\x00-\x1f\x7f/\\\\]", "_", name).strip().lstrip(".")  # no folders, not hidden
     stem, ext = os.path.splitext(name or "download")
     while len((stem + ext).encode()) > 200:            # file names stop at 255 bytes; leave room
         stem = stem[:-1]                               # for " (1)" and ".part.json"
     return stem + ext
+
+
+def server_name(resp):
+    """Content-Disposition's file name.  Servers often give two: filename*= in full (any
+    language, spaces kept) and a plain filename= for old browsers; the full one wins."""
+    names = [value for key, value in resp.headers.get_params([], header="content-disposition")
+             if key == "filename"]
+    full = [email.utils.collapse_rfc2231_value(v) for v in names if isinstance(v, tuple)]
+    return (full or [resp.headers.get_filename()])[0]
 
 
 # ---- the file on disk --------------------------------------------------------------------------
@@ -354,6 +367,7 @@ class PartFile:
     pieces, which pieces are still missing.  It becomes NAME when complete."""
 
     def __init__(self, folder, name, url):
+        self.url = url                      # the link as given: what the bytes belong to
         self.final = free_name(os.path.join(folder, name), url)
         self.path = self.final + ".part"
         self.notes = self.path + ".json"
@@ -373,11 +387,11 @@ class PartFile:
         """Keep bytes from an earlier try only if they belong to this very file; otherwise
         delete them.  Returns why they were deleted, or None."""
         notes = read_json(self.notes)
-        why = mismatch(notes, remote) if self.on_disk() else None
+        why = mismatch(notes, remote, self.url) if self.on_disk() else None
         if why:
             os.remove(self.path)
         open(self.path, "ab").close()                  # there is a .part now (if empty: an empty file)
-        self.about = {"url": remote.url, "size": remote.size, "fingerprint": remote.fingerprint}
+        self.about = {"url": self.url, "size": remote.size, "fingerprint": remote.fingerprint}
         if remote.splittable:
             kept = notes.get("missing") if self.on_disk() else None   # phase 2's notes: none
             self.size, self.missing = remote.size, kept or [[self.on_disk(), remote.size]]
@@ -431,13 +445,13 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
-def mismatch(notes, remote):
-    """Why bytes from an earlier try can't be used for this file, or None if they can."""
+def mismatch(notes, remote, url):
+    """Why bytes from an earlier try (at `url`) can't be used for this file, or None if they can."""
     if not remote.can_resume:
         return "this server can't resume"
     if remote.size is None:
         return "the server won't say how big the file is"
-    if notes.get("url") != remote.url:
+    if notes.get("url") != url:
         return "the old .part file is from a different link"
     if notes.get("size") != remote.size or notes.get("fingerprint") != remote.fingerprint:
         return "the file on the server changed since last time"

@@ -18,7 +18,9 @@ HINTS = {
     "BAD_INPUT": "Check the command's options.",
     "NOT_FOUND": "The link is wrong or has expired. Find a fresh link to the file.",
     "AUTH_REQUIRED": "The server wants a login. Ask the user for a cookies.txt file exported "
-                     "from their browser and add --cookies FILE, or add --header 'Authorization: ...'.",
+                     "from their browser and add --cookies FILE, or add --header 'Authorization: ...'. "
+                     "For a Drive, Dropbox or OneDrive link: ask the user to share it with anyone "
+                     "who has the link.",
     "NOT_A_FILE": "This link opens a web page, not a file. `links` lists the files the page links "
                   "to: download the one the user means (`next` does, when there is just one), or "
                   "ask. Use yt-dlp for a video page. Only if the user wants the page itself, add "
