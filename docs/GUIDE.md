@@ -16,7 +16,7 @@ Installed as a command instead (`pipx install`), you get `idm` alone; `pyproject
 
 ## The eval
 
-`eval/run_eval.py` runs Claude Code on its own (`claude -p`), the way τ-bench tests agents. Each run is a real agent in an empty folder, asked "Download this for me: URL", while a local server misbehaves in one set way. A program grades how it ended: is the right file on disk, byte for byte, or, where there is no file to get, was the user told why? The agent's own claim doesn't count. Each scenario runs with idm (`--plugin-dir`) and with plain tools (curl, wget...), with none of your own settings, hooks or MCP servers.
+`eval/run_eval.py` runs Claude Code on its own (`claude -p`), the way τ-bench tests agents. Each run is a real agent in an empty folder, asked "Download this into this folder: URL", while a local server misbehaves in one set way. A program grades how it ended: is the right file on disk, byte for byte, or, where there is no file to get, was the user told why? The agent's own claim doesn't count. Each scenario runs with idm (`--plugin-dir`) and with plain tools (curl, wget...), with none of your own settings, hooks or MCP servers.
 
 **Results** (Sonnet, 7 scenarios, both ways, 2 trials each, run twice; about $1.30 a run):
 
@@ -39,7 +39,7 @@ python3 eval/run_eval.py                          # every scenario, both ways
 python3 eval/run_eval.py --trials 3 --only busy   # one scenario, 3 times each way
 ```
 
-A run costs real tokens (a few cents to half a dollar with Sonnet). Each run's commands and last words are saved in `eval/results/`.
+A run costs real tokens (about $0.03 to $0.20 a run with Sonnet). Each run's commands and last words are saved in `eval/results/`.
 
 ## halo, the face
 
@@ -113,7 +113,7 @@ Claude Code folds shell commands into one line (`Ran 1 shell command`), which ha
 - **The face:** a disc of chunky pixels (two columns by one row each, so they look square), with blush and two eyes. The eyes and mouth are characters (`● ◡`, `╥ ⌒`, `^ ▽`), so they stay thin. The % goes under the mouth.
 - **The words:** the file name, how much is done, the speed and connections, and the time left. They become the server's complaint while it pushes back, and how to carry on while paused or after a failure.
 
-The colours are the "lavender" set picked from `mockups/experiments.py`. The look is the one approved there: beads ring, glyph face.
+The colours are the "lavender" set picked from [the mockups](https://github.com/Ajinkya259/IDM-for-Agents/blob/f5c8106/mockups/experiments.py): beads ring, glyph face.
 
 ## Many connections
 
@@ -125,7 +125,7 @@ When the server pushes back, an extra connection hands its piece to the others, 
 
 A link to YouTube, youtu.be, Instagram, TikTok, X, Vimeo, Facebook, Reddit, Twitch, Dailymotion or Threads opens a page with a player, not a file. The video sits behind the site's own machinery: signed links that expire, the picture and the sound as separate streams, and changes every few weeks. [yt-dlp](https://github.com/yt-dlp/yt-dlp) keeps up with all of that, so for these links idm hands the downloading to yt-dlp. idm stays the part the agent talks to, with the same JSON, codes and `next`, the background job, pause and resume, cancel, the schedule, the queue, the limit, and halo.
 
-1. **What is it?** idm asks yt-dlp about the video: its title, its streams and their sizes, and the file it will become, `Title [id].mp4`. It keeps the answer, so the download doesn't ask the site twice.
+1. **What is it?** idm asks yt-dlp about the video: its streams and their sizes, and the file it will become, `Title [id].mp4` (or the name given with `-o`). It keeps the answer, so the download doesn't ask the site twice.
 2. **Download it.** yt-dlp downloads from that answer, and idm reads its progress line by line into `status.json`, which is what halo draws. The picture and sound are joined into one `.mp4` (by ffmpeg; without ffmpeg, idm asks for the best video that comes as one file). `--audio` gets the sound alone.
 3. **Pause, resume, cancel, limit.** Pausing ends yt-dlp, which leaves its `.part` files, and resuming carries on from them. Cancel deletes them. A new `idm limit` restarts yt-dlp at the new speed, carrying on.
 
@@ -140,11 +140,11 @@ Sharing a file on Drive or Dropbox gives a link to a page that shows the file wi
 | The link you're given | What idm downloads |
 |---|---|
 | `drive.google.com/file/d/ID/view` (or `open?id=`, `uc?id=`) | `drive.usercontent.google.com/download?id=ID&confirm=t`, which skips the "can't scan this file for viruses" page big files get |
-| `docs.google.com/document/d/ID/edit` | its export: Docs as `.docx`, Sheets as `.xlsx`, Slides as `.pptx` (the first choice in File > Download). For a PDF, give idm `.../export?format=pdf` |
+| `docs.google.com/document/d/ID/edit` | its export: Docs as `.docx`, Sheets as `.xlsx`, Slides as `.pptx` (the first choice in File > Download). A link that already gives a file (`/export?format=pdf`, a published `/pub` or `/gviz` link) is downloaded as it is |
 | `dropbox.com/scl/fi/.../data.zip?rlkey=...&dl=0` | the same with `dl=1`. Dropbox calls every file "unspecified", so the name comes from the link |
 | `1drv.ms/u/s!...` (OneDrive) | OneDrive's own download link. OneDrive sends a shared file only to someone signed in or holding a guest pass, which its page gets for every visitor; idm gets one the same way |
 | `github.com/o/r/blob/main/a.zip` | `github.com/o/r/raw/main/a.zip` |
-| `huggingface.co/o/r/blob/main/model.bin` | `huggingface.co/o/r/resolve/main/model.bin` (models, datasets and spaces) |
+| `huggingface.co/o/r/blob/main/model.bin` | `huggingface.co/o/r/resolve/main/model.bin` (models, datasets and spaces; `gpt2/blob/...` too) |
 
 These files are then downloaded like any other: many connections, pause and resume, the queue, the limit and halo. The job keeps the link as it was given, which is what `idm list` shows and what a resume is matched by. That matters for OneDrive, whose download link changes every time.
 
@@ -160,7 +160,7 @@ Tried on real links: a 500 MB Drive file (8 connections, paused and resumed), a 
 A download doesn't have to start now. Its worker starts at once, but waits its turn in the background before the first byte:
 
 1. **Its time.** `--at 02:00` (or `2am`, `11:30pm`, `'2026-11-25 02:00'`; a time without a date means the next one) or `--in 2h` (`30m`, `1h30m`, `2d`). The reply says `"state": "scheduled"`, `starts_at` and `starts_in`, and has no `next`: there's nothing to run until then. `get` replies at once rather than waiting hours. The worker naps a second at a time on the wall clock, which keeps going while the Mac sleeps, so it starts on time after a wake. `idm resume ID --now` starts it now; a paused one keeps its time when resumed.
-2. **The download it follows.** `--after ID` waits until that one has ended (done, failed or cancelled). The reply says `"state": "queued"` and `waiting_for`.
+2. **The download it follows.** `--after ID` waits until that one has stopped (done, failed, cancelled or paused). The reply says `"state": "queued"` and `waiting_for`.
 3. **A free place.** At most `IDM_MAX_DOWNLOADS` (3) downloads run at once. Each running worker holds a lock on one of `~/.idm/places/N.lock`, and the lock goes with the process, however it ends, so a place never leaks. The others wait in line in the order they asked.
 
 `--limit 2M` keeps a download to 2 MB a second (`K` is 1,000), across all its connections. Every chunk waits for its turn on one shared clock, in pieces of an eighth of a second's worth, so the speed is even, not bursts and pauses. `idm limit ID 500K` changes it while the download runs (the worker reads it again every second), and `idm limit ID 0` removes it.
@@ -171,7 +171,7 @@ A server that stops answering is the hardest failure to see: nothing errors, not
 
 - **Short timeouts, separately.** A server gets 10 s to accept a connection, and 20 s of silence in the middle of a file, before that try counts as failed. (urllib has one timeout for both; idm's connections set them apart.)
 - **An honest status.** While nothing arrives, `speed` drops to 0, `eta` goes away, and `stalled` counts the seconds since the last byte. The `trouble` stays until bytes come again. halo says "nothing for 45s · timed out · retrying in 4s".
-- **A clear end.** After 2 minutes without a single byte on any connection (`IDM_PATIENCE`), idm stops with `NETWORK`, "nothing arrived for 2m", and `next`: `idm resume ID`. A busy server (429, 5xx) is different: it is answering, so it gets the usual 8 tries.
+- **A clear end.** After 2 minutes without a single byte on any connection (`IDM_PATIENCE`), idm stops with `NETWORK`, "nothing arrived for 2m", and `next`: `idm resume ID`. A busy server (429, 5xx) is different: it is answering, so it gets the usual 8 retries.
 
 A server that goes quiet for a while and comes back needs nothing from the agent: the connections try again and carry on.
 
@@ -212,7 +212,7 @@ bin/idm start URL               start in the background and reply at once
 bin/idm wait ID [--max S]       wait for it to finish
 bin/idm status ID               how it's going right now
 bin/idm watch [ID|LINK]         show it as halo (no ID: every download, as it happens)
-bin/idm list                    every download
+bin/idm list                    the latest 20 downloads
 bin/idm pause | resume | cancel ID
 
 options for get / start:
@@ -272,7 +272,7 @@ $ idm get https://example.com/members/report.pdf
 - **Paused or failed:** it carries on with it, using the new command's options. That's how adding `--cookies` fixes an `AUTH_REQUIRED`.
 - **Done:** it replies `"already": true`.
 
-`--again` forces a fresh download.
+`--again` forces a fresh download (while the same one is running, it is that one: never two at once into one `.part`).
 
 ## How the code is laid out
 
@@ -301,7 +301,7 @@ A job's folder holds:
 ## Tests
 
 ```
-python3 tests/run_tests.py        # 156 checks: every command and error code, the pieces, halo, the queue, videos, keys
+python3 tests/run_tests.py        # 181 checks: every command and error code, the pieces, halo, the queue, videos, keys
 claude plugin test .              # the mod: which commands it watches, the face under them
 python3 tests/testserver.py       # the misbehaving local server on its own, to try things by hand
 ```

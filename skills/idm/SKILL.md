@@ -24,7 +24,7 @@ something to run next, the reply has `next`: the exact command.
    - `"state": "queued"`: it is waiting its turn (`waiting_for` says for what). Run `next`.
    - `"ok": false`: look up `error.code` below, and run `next` when there is one.
 3. Video links (YouTube, Instagram reels, TikTok, X, Vimeo, Facebook, Reddit...) work the same
-   way: `idm get LINK -d FOLDER`. The file is named after the video's title. `--audio` gets the
+   way: `idm get LINK -d FOLDER`. The file is named after the video's title (or `-o NAME`). `--audio` gets the
    sound alone. A playlist link fails with `NOT_A_FILE` and `links` (its first videos): pick
    the one the user means, or ask. For a video on another site, add `--video`.
 4. Share links work as they are: Google Drive, Google Docs/Sheets/Slides, Dropbox, OneDrive,
@@ -46,6 +46,8 @@ something to run next, the reply has `next`: the exact command.
 | `AUTH_REQUIRED` | The site wants a login (for videos: a private video, or Instagram, which often wants one). For a Drive, Dropbox or OneDrive link, it isn't shared with everyone: ask the user to share it as "anyone with the link" and send the new link. Ask the user to export their browser cookies as a `cookies.txt` file (a "Get cookies.txt" browser extension does it) and tell you where it is; then run `next` with that path in place of `<cookies.txt>`. A token works too: `--header 'Authorization: Bearer TOKEN'`. |
 | `NOT_A_FILE` | The link opens a web page, not a file. `error.links` lists the files that page links to: when there is one, `next` downloads it; when there are several, pick the one the user means or ask. None? Look at the page yourself, or ask. Use `--allow-page` only if the user clearly wants the page itself. |
 | `NEEDS_TOOL` | Video sites need yt-dlp. Ask the user to install it (`brew install yt-dlp ffmpeg`, or `pipx install yt-dlp`), or to update it if it's there (`yt-dlp -U`); then run `next`. |
+| `HTTP_ERROR` | The server refused for another reason (`error.message` says which). Check the link; if it looks right, tell the user what the server said. |
+| `NO_SUCH_JOB` | No download has that id. Run `idm list` to find it. |
 | `TLS` | The site's certificate can't be verified. Tell the user; don't work around it. |
 | `DISK_FULL` | Tell the user; after they free space, run `next`. |
 | `NO_PERMISSION`, `WRITE_FAILED` | Pick another folder with `-d`. |

@@ -60,16 +60,18 @@ def sign_in_page(url):
 def google(opener, url):
     """A Drive file, a Drive folder, or a Google Doc, Sheet or Slides."""
     path, query = urllib.parse.urlsplit(url).path, query_of(url)
-    doc = re.match(r"/(document|spreadsheets|presentation)/d/([\w-]+)", path)
-    if doc and "/export" not in path:
-        kind, doc_id = doc.groups()
+    doc = re.search(r"/(document|spreadsheets|presentation)/(?:u/\d+/)?d/([\w-]+)"
+                    r"(?:/(?:edit|view|preview|copy|htmlview))?/?$", path)
+    if doc and doc.group(2) != "e":            # the editor's link (a published one, /export,
+        kind, doc_id = doc.groups()            # /pub or /gviz, already gives a file)
         return f"https://docs.google.com/{kind}/d/{doc_id}/export?format={DOCS_FORMAT[kind]}", None
     folder = re.search(r"/folders/([\w-]+)", path)
     folder_id = folder.group(1) if folder else path.endswith("folderview") and query.get("id")
     if folder_id:
         raise drive_folder(opener, folder_id)
     file = re.search(r"/file/d/([\w-]+)", path)
-    file_id = file.group(1) if file else query.get("id")
+    old_style = re.fullmatch(r"(/u/\d+)?/(uc|open)", path)       # uc?id=ID, open?id=ID
+    file_id = file.group(1) if file else old_style and query.get("id")
     if not file_id:
         return url, None
     extra = {"resourcekey": query["resourcekey"]} if query.get("resourcekey") else {}
@@ -128,8 +130,9 @@ def github(opener, url):
 
 
 def hugging_face(opener, url):
-    """A file's page (/blob/) -> the file (/resolve/), in a model, dataset or space."""
-    return re.sub(r"^(https://[^/]+(?:/datasets|/spaces)?/[^/]+/[^/]+)/blob/", r"\1/resolve/", url), None
+    """A file's page (/blob/) -> the file (/resolve/), in a model (gpt2, or owner/model), a
+    dataset or a space."""
+    return re.sub(r"^(https://[^/]+/.+?)/blob/", r"\1/resolve/", url, count=1), None
 
 
 SITES = (("drive.google.com", google), ("docs.google.com", google), ("dropbox.com", dropbox),

@@ -2,8 +2,8 @@
 """
 The eval, τ-bench style: how well does an AI agent get a file from a server that misbehaves?
 
-Every run is real.  Claude Code (`claude -p`) gets a user's request ("Download this for me:
-URL") in a fresh, empty folder, while a local server misbehaves in one set way.  In some
+Every run is real.  Claude Code (`claude -p`) gets a user's request ("Download this into this
+folder: URL") in a fresh, empty folder, while a local server misbehaves in one set way.  In some
 scenarios a scripted user answers the agent's question (the login one: "here are my
 cookies").  Then a program checks how it ended (is the right file on disk, byte for byte?
 was the user told the truth?), never the agent's own word for it.
@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PLUGIN = HERE.parent                                   # this phase's folder is the plugin
+PLUGIN = HERE.parent                                   # the repo is the plugin
 sys.path.insert(0, str(PLUGIN / "tests"))
 from run_tests import Server, free_port, sha  # noqa: E402  (the tests' local server)
 

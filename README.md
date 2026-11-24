@@ -70,7 +70,7 @@ idm start URL --limit 2M         at most 2 MB/s
 idm wait | status | pause | resume | cancel ID
 idm limit ID SPEED               change the speed limit while it runs (0: none)
 idm watch [ID]                   show halo (no ID: every download)
-idm list                         every download
+idm list                         the latest 20 downloads
 ```
 
 These options work on `get` and `start`:
@@ -90,7 +90,7 @@ These work while `idm get`, `idm wait` or `idm watch` shows a download in your t
 |---|---|
 | `space` | pause, or resume |
 | `p` | pause |
-| `r` | resume (a failed download too) |
+| `r` | resume |
 | `q` | stop watching; the download keeps going in the background |
 | `Ctrl+C` | in `idm get`: pause the download. In `idm wait` or `idm watch`: stop watching |
 
@@ -98,7 +98,7 @@ They only work in a terminal, not when an agent runs idm.
 
 ## Tested
 
-`python3 tests/run_tests.py` runs 165 checks.
+`python3 tests/run_tests.py` runs 181 checks.
 
 In an eval, real Claude Code agents downloaded from a server that fails on purpose:
 

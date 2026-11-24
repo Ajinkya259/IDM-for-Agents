@@ -7,8 +7,8 @@ watch and stop workers.
 
 Each job lives in a folder, ~/.idm/jobs/<id>/:
     job.json      what to download (written by `idm get` / `idm start`)
-    status.json   how it is going, rewritten by the worker about 5 times a second.  It is
-                  also what the animated face will read.
+    status.json   how it is going, rewritten by the worker about 5 times a second (what
+                  replies and halo are made from)
     worker.log    anything the worker printed, for debugging
 
 Before it downloads, a worker waits its turn: for its time (--at, --in), for the download it
@@ -35,6 +35,7 @@ from .errors import IDMError, classify
 HOME = Path(os.environ.get("IDM_HOME") or "~/.idm").expanduser().absolute()
 MAX_RUNNING = int(os.environ.get("IDM_MAX_DOWNLOADS", "3"))   # downloads at once; the rest wait
 ACTIVE = ("scheduled", "queued", "downloading")        # a worker is on it (maybe waiting its turn)
+STARTING = 10                                           # seconds a new worker has to take its lock
 FINAL = ("done", "failed", "paused", "cancelled")       # nothing is happening
 # and "new": created, its worker not started yet
 
@@ -67,8 +68,8 @@ class Job:
     def status(self):
         """How the job is going.  A worker that died without saying so is reported as failed."""
         st = read_json(self.dir / "status.json")
-        if st.get("state") in ACTIVE and st.get("pid") and not alive(st["pid"]):
-            st = self.set_status(state="failed", error=IDMError(
+        if st.get("state") in ACTIVE and st.get("pid") and not working(self, st):
+            st = self.set_status(state="failed", pid=None, error=IDMError(
                 "INTERRUPTED", "the download process stopped unexpectedly").to_dict())
         return st
 
@@ -142,12 +143,13 @@ def start(job):
     job.set_status(pid=worker.pid)                    # adds to whatever the worker already wrote
 
 
-def stop(job, timeout=5):
+def stop(job):
     """Ask the worker to stop (it saves what it has and says 'paused'), and wait until it has."""
-    pid = job.status().get("pid")
+    st = job.status()                                 # (a pid in it is this job's worker's)
+    pid = st.get("pid") if st.get("state") in ACTIVE else None
     if alive(pid):
         os.kill(pid, signal.SIGTERM)
-        deadline = time.time() + timeout
+        deadline = time.time() + 5
         while alive(pid) and time.time() < deadline:
             time.sleep(0.05)
         if alive(pid):                                # it didn't listen: make it
@@ -170,6 +172,25 @@ def cancel(job):
     job.set_status(state="cancelled")
 
 
+def working(job, st):
+    """Is a worker on this job right now?  Its pid alone can't say: after a crash or a restart,
+    another process may have that number.  So unless it wrote its status a moment ago (it may
+    be starting up), it must also hold worker.lock, which goes with its process however it ends."""
+    if not alive(st.get("pid")):
+        return False
+    return time.time() - st.get("updated", 0) < STARTING or held(job.dir / "worker.lock")
+
+
+def held(path):
+    """Does a process hold the lock on `path`?"""
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+    return False                                      # it was free (and closing the file freed it)
+
+
 def alive(pid):
     if not pid:
         return False
@@ -178,10 +199,8 @@ def alive(pid):
     try:
         os.kill(pid, 0)                               # signal 0: "are you there?"
         return True
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):     # (a worker is always this user's)
         return False
-    except PermissionError:
-        return True
 
 
 # ---- the worker ------------------------------------------------------------------------------
@@ -251,7 +270,7 @@ def ahead_in_line(job, asked):
     """Is another job waiting for a place since before this one asked?"""
     for other in every():
         st = read_json(other.dir / "status.json")
-        if other.id != job.id and st.get("state") == "queued" and alive(st.get("pid")) \
+        if other.id != job.id and st.get("state") == "queued" and working(other, st) \
                 and (st.get("in_line_since") or asked) < asked:
             return True
     return False
@@ -293,12 +312,11 @@ class StatusReport(engine.Report):
 
     def found(self, remote, part):
         self.size = remote.size
-        self.job.set_status(state="downloading", file=part.final, size=remote.size,
-                            can_resume=remote.can_resume)
+        self.job.set_status(state="downloading", file=part.final, size=remote.size)
 
-    def video(self, title, file, size):
+    def video(self, file, size):
         self.size = size
-        self.job.set_status(file=file, size=size, title=title, can_resume=True)
+        self.job.set_status(file=file, size=size)
 
     def parts(self, paths):
         self.job.set_status(parts=paths)              # (what `idm cancel` deletes)
@@ -338,6 +356,6 @@ class StatusReport(engine.Report):
         return (b1 - b0) / (t1 - t0) if t1 > t0 else 0.0
 
     def end(self, state, **fields):
-        self.job.set_status(state=state, speed=0, eta=None, trouble=None, connections=0, stalled=None,
-                            waiting_for=None, in_line_since=None, finished=time.time(),
+        self.job.set_status(state=state, pid=None, speed=0, eta=None, trouble=None, connections=0,
+                            stalled=None, waiting_for=None, in_line_since=None, finished=time.time(),
                             **{"bytes": self.done, **fields})

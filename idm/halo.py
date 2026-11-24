@@ -132,7 +132,7 @@ def caption(st):
         lines = [f"starts at {when.clock(starts)}", f"in {when.how_long(starts - time.time())}"]
     elif state == "queued" and st.get("waiting_for"):
         lines = ["waiting for", st["waiting_for"]]
-    elif state != "downloading" or not done:
+    elif (state != "downloading" or not done) and not trouble:
         lines = ["starting…", ""]
     else:
         amount = f"{mb(done)[:-3]} of {mb(size)}" if size else mb(done)

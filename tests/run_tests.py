@@ -3,7 +3,8 @@
 Tests for idm: every command, every error code, the background jobs, downloading in pieces
 over many connections, halo (in a terminal, and as cells for Claude Code), what a critic
 found broken, phase 6 (scheduling, the waiting line, speed limits, silent servers),
-phase 7 (videos) and phase 8 (share links: Drive, Dropbox, OneDrive, GitHub, Hugging Face).
+phase 7 (videos), phase 8 (share links: Drive, Dropbox, OneDrive, GitHub, Hugging Face), and
+what a review of the whole code found.
 
     python3 tests/run_tests.py          (about 90 seconds; uses free local ports)
     python3 tests/run_tests.py pause    (only the tests with "pause" in their name)
@@ -38,7 +39,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 IDM = [sys.executable, str(HERE.parent / "bin" / "idm")]
 sys.path.insert(0, str(HERE.parent))
-from idm import engine, halo, jobs, shares, when  # noqa: E402  (needs the path above)
+from idm import cli, engine, halo, jobs, shares, video, when  # noqa: E402  (needs the path above)
 from idm.errors import IDMError  # noqa: E402
 from idm.crew import MIN_PIECE, Missing  # noqa: E402
 TESTS, RESULTS = [], []
@@ -314,7 +315,7 @@ def no_server_gives_up_with_next():
     e = r.get("error", {})
     check("nothing listening: NETWORK, retryable, exit 3, after retrying",
           code == 3 and e.get("code") == "NETWORK" and e.get("retryable") is True
-          and "gave up after 2 tries" in e.get("message", ""), r)
+          and "gave up after 3 tries" in e.get("message", ""), r)       # the first, and 2 retries
     check("nothing listening: `next` resumes the same job",
           r.get("next") == f"idm resume {r.get('job')}", r)
 
@@ -1080,8 +1081,8 @@ def youtube_link_downloads_through_ytdlp():
     check("its picture and sound, joined, byte for byte, and nothing else left",
           f.exists() and sha(f) == clip_sha() and box.files() == [CLIP], box.files())
     st = box.status_file(r.get("job", "?"))
-    check("the status has the title and the size, for halo", st.get("title") == "Test clip"
-          and st.get("size") == 3_000_000, st)
+    check("the status has the video's size (its streams together), for halo's percent",
+          st.get("size") == 3_000_000, st)
 
 
 @test
@@ -1251,6 +1252,13 @@ def share_links_point_at_the_file():
         "https://huggingface.co/o/m/blob/main/model.safetensors": ("https://huggingface.co/o/m/resolve/main/model.safetensors", None),
         "https://huggingface.co/datasets/o/d/blob/main/train.parquet": ("https://huggingface.co/datasets/o/d/resolve/main/train.parquet", None),
         "https://example.com/a.zip": ("https://example.com/a.zip", None),
+        "https://docs.google.com/document/u/0/d/1Doc/edit": ("https://docs.google.com/document/d/1Doc/export?format=docx", None),
+        "https://docs.google.com/uc?export=download&id=1AbC": (drive_file("1AbC"), None),
+        "https://huggingface.co/gpt2/blob/main/config.json": ("https://huggingface.co/gpt2/resolve/main/config.json", None),
+        # links that already give a file stay as they are
+        "https://docs.google.com/spreadsheets/d/e/2PACX-1v/pub?output=csv": ("https://docs.google.com/spreadsheets/d/e/2PACX-1v/pub?output=csv", None),
+        "https://docs.google.com/spreadsheets/d/1Sh/export?format=csv&id=1Sh&gid=0": ("https://docs.google.com/spreadsheets/d/1Sh/export?format=csv&id=1Sh&gid=0", None),
+        "https://docs.google.com/spreadsheets/d/1Sh/gviz/tq?tqx=out:csv": ("https://docs.google.com/spreadsheets/d/1Sh/gviz/tq?tqx=out:csv", None),
     }
     wrong = {link: shared(link) for link, want in cases.items() if shared(link) != want}
     check("Drive, Docs, Dropbox, GitHub and Hugging Face links point at the file itself "
@@ -1346,6 +1354,172 @@ def the_servers_full_file_name_wins():
           named(full) == "Example Sheet.xlsx" and named("attachment; filename*=UTF-8''caf%C3%A9.pdf")
           == "café.pdf" and named('attachment; filename="plain.zip"') == "plain.zip",
           [named(full)])
+
+
+# ---- what a review of the whole code found ------------------------------------------------------
+def within(seconds, fn, *args):
+    """fn(*args), or TimeoutError if it takes longer than `seconds` (it would never end)."""
+    def too_long(*_):
+        raise TimeoutError(f"{fn.__name__} took over {seconds} s")
+    old = signal.signal(signal.SIGALRM, too_long)
+    signal.alarm(seconds)
+    try:
+        return fn(*args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+@test
+def any_name_is_made_safe():
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + "s" * 342       # a link that ends in a JWT
+    name = within(5, engine.safe_name, token)
+    check("a long name with dots in it: cut to size (not an endless loop)",
+          len(name.encode()) <= 200 and name.startswith("eyJ"), name)
+    names = [engine.safe_name(n) for n in ("../../escaped.sh", "/tmp/abs.sh", "..", "")]
+    check("a name can't point outside the folder, or be hidden, or be empty",
+          all("/" not in n and not n.startswith(".") and n for n in names), names)
+
+
+@test
+def a_share_links_name_stays_in_the_folder():
+    srv, box = Server(size=1), Sandbox()
+    box.dl.mkdir(parents=True)
+    sites = shares.SITES
+    shares.SITES = (*sites, ("share.example", lambda opener, url: (srv.url(), "../../escaped.bin")))
+    try:
+        saved = engine.download(jobs.Job(id="t", url="https://share.example/s/x", folder=str(box.dl)),
+                                engine.Report())
+    finally:
+        shares.SITES = sites
+    check("a share link named '../../escaped.bin': saved inside the download folder",
+          Path(saved).parent == box.dl and sha(saved) == srv.sha(), saved)
+
+
+@test
+def an_empty_file_on_nginx():
+    srv, box = Server(), Sandbox()
+    code, r = box.get(srv.url("/empty-416.bin"))
+    check("an empty file whose 416 carries an error page (nginx): done, 0 bytes, nothing left over",
+          code == 0 and r.get("bytes") == 0 and box.files() == ["empty-416.bin"], (r, box.files()))
+
+
+@test
+def a_resume_carries_on_under_its_earlier_name():
+    srv, box = Server(size=4), Sandbox()
+    box.dl.mkdir(parents=True)
+    pattern = bytes((i + 1) % 251 for i in range(251))
+    (box.dl / "halo test (1).bin.part").write_bytes((pattern * 4000)[:1_000_000])   # last time,
+    (box.dl / "halo test (1).bin.part.json").write_text(json.dumps(                  # its name was
+        {"url": srv.url(), "size": 4_000_000, "fingerprint": '"test-v1"'}))          # taken
+
+    class Seen(engine.Report):
+        def leftovers(self, why_discarded, have):
+            self.kept = (why_discarded, have)
+
+    seen = Seen()
+    saved = engine.download(jobs.Job(id="t", url=srv.url(), folder=str(box.dl)), seen)
+    check("its name is free now, but the bytes from last time are under 'halo test (1).bin': "
+          "kept, and the file finished there", seen.kept == (None, 1_000_000)
+          and saved == str(box.dl / "halo test (1).bin") and sha(saved) == srv.sha()
+          and box.files() == ["halo test (1).bin"], (getattr(seen, "kept", None), box.files()))
+
+
+@test
+def next_keeps_the_jobs_own_options():
+    job = jobs.Job(id="a1", url="https://www.youtube.com/watch?v=x", folder="/tmp/dl", audio=True,
+                   video=True, limit=1_000_000, headers={"Referer": "https://r.org/p"})
+    step = cli.next_step(job, {"state": "failed", "error": {"code": "AUTH_REQUIRED"}})
+    args = cli.parser(cli.Output(True)).parse_args(shlex.split(step.replace("<cookies.txt>", "c.txt"))[1:])
+    check("AUTH_REQUIRED's next runs as it is, and keeps the job's own options (only the login "
+          "is new)", args.audio and args.limit == "1000000" and args.header == ["Referer: https://r.org/p"]
+          and args.cookies == "c.txt", step)
+    page = jobs.Job(id="b2", url="https://x.org/page", folder="/tmp/dl", cookies="/c.txt",
+                    headers={"Authorization": "Bearer t"}, limit=500_000)
+    step = cli.next_step(page, {"state": "failed", "error": {"code": "NOT_A_FILE",
+                                                             "links": ["https://cdn.org/f.zip"]}})
+    check("NOT_A_FILE's next (the one file on the page) keeps the cookies and the speed limit, "
+          "but not an Authorization header meant for the page's server",
+          "--cookies /c.txt" in step and "--limit 500000" in step and "Authorization" not in step, step)
+
+
+@test
+def a_dead_jobs_old_pid_is_left_alone():
+    box, saved_home = Sandbox(), jobs.HOME
+    jobs.HOME = box.root / "home"
+    other = subprocess.Popen(["sleep", "60"])            # a process that now has a job's old pid
+    LEFTOVERS.append(other.kill)
+    try:
+        ended = jobs.new("https://x.org/a.zip", str(box.dl))
+        ended.set_status(state="failed", pid=other.pid)
+        jobs.stop(ended)
+        jobs.cancel(ended)
+        check("pause or cancel of a job that isn't running: the process with its old pid is "
+              "left alone", other.poll() is None)
+        crashed = jobs.new("https://x.org/b.zip", str(box.dl))
+        engine.write_json(crashed.dir / "status.json", {"state": "downloading", "pid": other.pid,
+                                                        "updated": time.time() - 60})
+        st = crashed.status()
+        jobs.stop(crashed)
+        check("a 'downloading' job whose worker is gone and whose pid is someone else's now "
+              "(after a crash or a restart): INTERRUPTED, and that process is left alone",
+              st.get("state") == "failed" and st["error"]["code"] == "INTERRUPTED"
+              and other.poll() is None, st)
+    finally:
+        jobs.HOME = saved_home
+
+
+@test
+def a_download_cant_wait_for_itself():
+    srv, box = Server(), Sandbox()
+    code, r = box.start(srv.url(), "--in", "1h")
+    job = r.get("job", "?")
+    box.idm("pause", job)
+    code, r = box.start(srv.url(), "--after", job)
+    check("--after its own id: BAD_INPUT, and the download stays as it was",
+          code == 2 and r.get("error", {}).get("code") == "BAD_INPUT"
+          and box.status_file(job)["state"] == "paused", r)
+
+
+@test
+def again_while_it_runs_is_that_run():
+    srv, box = Server(size=4, rate=1), Sandbox()
+    code, first = box.start(srv.url())
+    code, again = box.start(srv.url(), "--again")
+    check("--again while the same download is running: that one (never two at once into one "
+          ".part)", again.get("job") == first.get("job") and again.get("state") == "downloading",
+          (first, again))
+
+
+@test
+def halo_says_what_is_wrong_before_the_first_byte():
+    lines = halo.caption({"state": "downloading", "file": "/dl/a.zip", "bytes": None,
+                          "trouble": {"message": "the server said 429 Too Many Requests", "retry_in": 2}})
+    check("a server that pushes back from the start: its complaint shows, not 'starting…'",
+          any("429" in text for text, _ in lines), lines)
+
+
+@test
+def watch_stops_on_q_while_nothing_downloads():
+    box = Sandbox(**TRUE_COLOUR)
+    started = time.time()
+    code, shown = in_terminal(["watch"], box.env, keys=((1, "q"),), timeout=10)
+    check("watch (no id), nothing downloading yet: q stops it", code == 0
+          and time.time() - started < 5 and "q or Ctrl+C" in shown, shown[-300:])
+
+
+@test
+def video_options_and_failures():
+    busy = video.problem("ERROR: Unable to download webpage: HTTP Error 503: Service Unavailable")
+    check("a video site's 503 (Service Unavailable): SERVER_ERROR, worth retrying, not NOT_FOUND",
+          busy.code == "SERVER_ERROR", busy.code)
+    sound = video.choices(FAKE_YTDLP, jobs.Job(id="v", url="https://youtu.be/x", folder="/dl", audio=True))
+    named = video.choices(FAKE_YTDLP, jobs.Job(id="v", url="https://youtu.be/x", folder="/dl",
+                                               name="my talk.mp4"))
+    check("--audio falls back to the whole video's sound when a site has no sound-only stream",
+          sound[sound.index("-f") + 1].endswith("/b"), sound)
+    check("-o NAME names a video too (with the extension yt-dlp gives it)",
+          named[named.index("-o") + 1] == "my talk.%(ext)s", named)
 
 
 def main():

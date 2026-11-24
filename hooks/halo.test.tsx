@@ -36,19 +36,20 @@ function row(id: string) {
 }
 
 test('it knows which download a command is about', () => {
-  expect(watchTarget('idm wait ab12cd')).toBe('ab12cd')
-  expect(watchTarget('cd IDM && bin/idm get "https://x.org/a.zip" -d dl')).toBe('https://x.org/a.zip')
-  expect(watchTarget('idm get -d dl --connections 4 https://x.org/a.zip')).toBe('https://x.org/a.zip')
-  expect(watchTarget('python3 -m idm wait 0f3e9a --max 30')).toBe('0f3e9a')
-  expect(watchTarget('idm get --at 02:00 --limit 2M https://x.org/a.zip')).toBe('https://x.org/a.zip')
+  expect(watchTarget('idm wait ab12cd')?.target).toBe('ab12cd')
+  expect(watchTarget('cd IDM && bin/idm get "https://x.org/a.zip" -d dl')?.target).toBe('https://x.org/a.zip')
+  expect(watchTarget('idm get -d dl --connections 4 https://x.org/a.zip')?.target).toBe('https://x.org/a.zip')
+  expect(watchTarget('python3 -m idm wait 0f3e9a --max 30')?.target).toBe('0f3e9a')
+  expect(watchTarget('idm get --at 02:00 --limit 2M https://x.org/a.zip')?.target).toBe('https://x.org/a.zip')
   expect(watchTarget('idm start https://x.org/a.zip')).toBeNull() // replies at once: nothing to show
   expect(watchTarget('curl -O https://x.org/a.zip')).toBeNull()
   // what a critic tried
-  expect(watchTarget("idm get --header 'Referer: https://ref.org/p' https://x.org/a.zip")).toBe('https://x.org/a.zip')
-  expect(watchTarget('echo $(idm get https://x.org/a.zip)')).toBe('https://x.org/a.zip')
-  expect(watchTarget('idm get "https://x.org/my file.zip"')).toBe('https://x.org/my file.zip')
-  expect(watchTarget('idm get https://x.org/a?b=1\\&c=2')).toBe('https://x.org/a?b=1&c=2')
-  expect(watchTarget('IDM_HOME=/tmp/h ~/bin/idm wait 0f3e9a')).toBe('0f3e9a')
+  expect(watchTarget("idm get --header 'Referer: https://ref.org/p' https://x.org/a.zip")?.target).toBe('https://x.org/a.zip')
+  expect(watchTarget('echo $(idm get https://x.org/a.zip)')?.target).toBe('https://x.org/a.zip')
+  expect(watchTarget('idm get "https://x.org/my file.zip"')?.target).toBe('https://x.org/my file.zip')
+  expect(watchTarget('idm get https://x.org/a?b=1\\&c=2')?.target).toBe('https://x.org/a?b=1&c=2')
+  expect(watchTarget('IDM_HOME=/tmp/h ~/bin/idm wait 0f3e9a')).toEqual({ target: '0f3e9a', env: { IDM_HOME: '/tmp/h' } })
+  expect(watchTarget('LANG=C idm wait 0f3e9a')).toEqual({ target: '0f3e9a', env: {} })
   expect(watchTarget('echo "run idm get https://x.org/a.zip later"')).toBeNull()
   expect(watchTarget('grep "idm wait" notes.txt')).toBeNull()
 })

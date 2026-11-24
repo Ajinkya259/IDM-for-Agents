@@ -7,6 +7,7 @@ the whole file, as in phase 2.  The engine doesn't print: it tells a `report` ob
 happening (so the caller decides how to show it), and every failure is an IDMError with a code.
 """
 import email.utils
+import glob
 import http.client
 import http.cookiejar
 import json
@@ -44,7 +45,7 @@ class Report:
 
     def retrying(self, error, wait): """`error` happened; trying again in `wait` seconds."""
 
-    def video(self, title, file, size): """yt-dlp described the video: it will be saved as `file`."""
+    def video(self, file, size): """yt-dlp described the video: it will be saved as `file`."""
 
     def parts(self, paths): """yt-dlp is downloading into these files (its streams)."""
 
@@ -56,7 +57,7 @@ def download(job, report):
     opener, limit = make_opener(job), Limit(job)
     file = with_retries(lambda: shares.the_file(opener, job), report)    # 1. a share link? the file's
     remote = with_retries(lambda: probe(opener, file), report)           # 2. what is this file?
-    part = PartFile(job.folder, file.name or remote.name, job.url)       # 3. where does it go?
+    part = PartFile(job.folder, safe_name(file.name or remote.name), job.url)  # 3. where to?
     report.found(remote, part)
     report.leftovers(part.keep_or_discard(remote), part.have())          # 4. anything from last time?
     if remote.splittable:                                                # 5. get the missing bytes:
@@ -90,11 +91,13 @@ def probe(opener, job):
     except urllib.error.HTTPError as e:
         if e.code != 416 or e.headers.get("Content-Range") != "bytes */0":
             raise
-        resp = e                                       # 416 "there is no byte 0": an empty file
+        with e:                                        # 416 "there is no byte 0": an empty file
+            return Remote(name=pick_name(e), size=0,   # (whatever page comes with it)
+                          can_resume=True, fingerprint=fingerprint(e))
     with resp:
         page = resp.headers.get_content_type() in PAGE_TYPES and not job.allow_page
         remote = Remote(name=pick_name(resp), size=total_size(resp),
-                        can_resume=resp.status in (206, 416), fingerprint=fingerprint(resp))
+                        can_resume=resp.status == 206, fingerprint=fingerprint(resp))
     if page and shares.sign_in_page(resp.geturl()):
         raise IDMError("AUTH_REQUIRED", "the link leads to a sign-in page: it isn't shared with "
                                         "everyone")
@@ -111,10 +114,13 @@ def links_on_page(opener, job):
         with opener.open(urllib.request.Request(job.url, headers=headers), timeout=READ_TIMEOUT) as resp:
             html = resp.read(1_000_000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
             base = resp.geturl()
-    except (OSError, ValueError, http.client.HTTPException):
-        return []
+    except (OSError, ValueError, LookupError, http.client.HTTPException):   # (LookupError: a
+        return []                                                         # charset Python lacks)
     finder = LinkFinder()
-    finder.feed(html)
+    try:
+        finder.feed(html)
+    except (NotImplementedError, AssertionError):      # markup Python 3.9's parser gives up on
+        return []
     links = (urllib.parse.urljoin(base, href) for href in finder.hrefs)
     files = [url for url in links if url.startswith(("http://", "https://"))
              and os.path.splitext(urllib.parse.urlsplit(url).path)[1].lower() not in PAGE_EXTENSIONS]
@@ -342,10 +348,16 @@ def fingerprint(resp):
 def pick_name(resp):
     """The server's name for the file (Content-Disposition), or else the last part of the
     link.  Made safe to save under."""
-    name = server_name(resp) or \
-        urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(resp.geturl()).path))
-    name = re.sub(r"[\x00-\x1f\x7f/\\\\]", "_", name).strip().lstrip(".")  # no folders, not hidden
+    return safe_name(server_name(resp) or
+                     urllib.parse.unquote(os.path.basename(urllib.parse.urlparse(resp.geturl()).path)))
+
+
+def safe_name(name):
+    """A name to save a file under: no folders in it, not hidden, not too long."""
+    name = re.sub(r"[\x00-\x1f\x7f/\\]", "_", name or "").strip().lstrip(".")
     stem, ext = os.path.splitext(name or "download")
+    if len(ext.encode()) > 20:                         # a dot in a long name, not an extension
+        stem, ext = stem + ext, ""
     while len((stem + ext).encode()) > 200:            # file names stop at 255 bytes; leave room
         stem = stem[:-1]                               # for " (1)" and ".part.json"
     return stem + ext
@@ -460,8 +472,14 @@ def mismatch(notes, remote, url):
 
 def free_name(path, url):
     """clip.mp4 is taken, or another link's download is under way as clip.mp4.part?  Use
-    'clip (1).mp4'.  (This link's own unfinished clip.mp4.part is the one to carry on.)"""
+    'clip (1).mp4'.  This link's own unfinished download is the one to carry on, under the
+    name it got then (clip.mp4 may have been taken that time, and moved away since)."""
     stem, ext = os.path.splitext(path)
+    numbered = glob.escape(f"{stem} (") + "*" + glob.escape(f"){ext}.part.json")
+    for notes in [path + ".part.json", *glob.glob(numbered)]:
+        name = notes[:-len(".part.json")]
+        if read_json(notes).get("url") == url and not os.path.exists(name):
+            return name
     n = 1
     while os.path.exists(path) or read_json(path + ".part.json").get("url", url) != url:
         path, n = f"{stem} ({n}){ext}", n + 1

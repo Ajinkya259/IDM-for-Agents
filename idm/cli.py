@@ -37,6 +37,7 @@ from .errors import RETRYABLE, IDMError, from_disk
 
 AGENT_WAIT = 90     # seconds an agent's get/wait may take (tool calls are cut off at ~120 s)
 MAX_CONNECTIONS = 16
+DEFAULT_CONNECTIONS = 8
 LIST_SHOWS = 20     # `idm list` shows the latest 20 downloads
 
 
@@ -143,17 +144,36 @@ def find_or_start(args):
     except OSError as e:
         raise from_disk(e) from None
     with jobs.locked(jobs.HOME / "jobs.lock"):
-        job = None if args.again else jobs.find(url, folder, args.output)
+        job = jobs.find(url, folder, args.output)
+        if args.again and job and job.status().get("state") not in jobs.ACTIVE:
+            job = None                                   # (--again while it runs: that run)
         job = job or jobs.new(url, folder, args.output)
         st = job.status()
         if st.get("state") == "done" and os.path.exists(st.get("file", "")):
             return job, True
         if st.get("state") not in jobs.ACTIVE:
+            if waits_for(choices["after"], job.id):
+                raise IDMError("BAD_INPUT", f"--after {choices['after']} would make download "
+                                            f"{job.id} wait for itself")
             for name, value in choices.items():          # the latest command's options win
                 setattr(job, name, value)
             job.save()
             jobs.start(job)
     return job, False
+
+
+def waits_for(after, job_id):
+    """Does following `after` (and what it follows, and so on) lead back to job_id?"""
+    seen = set()
+    while after and after not in seen:
+        if after == job_id:
+            return True
+        seen.add(after)
+        try:
+            after = jobs.load(after).after
+        except IDMError:                                 # (that job's folder is gone)
+            return False
+    return False
 
 
 def link(url):
@@ -288,21 +308,33 @@ def find_job(target):
 
 
 def watch_all(out):
-    """Follow every download as it happens, one after another, until Ctrl+C."""
-    print("  watching for downloads (Ctrl+C to stop)")
+    """Follow every download as it happens, one after another, until q or Ctrl+C."""
+    print("  watching for downloads (q or Ctrl+C to stop)")
     try:
         while True:
-            going = [j for j in jobs.every() if j.status().get("state") in ("queued", "downloading")]
-            if not going:
-                time.sleep(0.2)
-                continue
+            job = next_download(out)
+            if not job:                                  # q, while nothing was downloading
+                return 0
             out.new_face()
-            st = follow(going[-1], None, out)
-            out.result(going[-1], st)
-            if out.stopped:                              # Ctrl+C while following it
+            out.result(job, follow(job, None, out))
+            if out.stopped:                              # q or Ctrl+C while following it
                 return 0
     except KeyboardInterrupt:
         return 0
+
+
+def next_download(out):
+    """The download to show: the latest one downloading, else the latest waiting its turn.
+    Waits for one; None if the person presses q first."""
+    with out.listening() as keys:
+        while keys.pressed() != "q":
+            states = [(j, j.status().get("state")) for j in jobs.every()]
+            going = [j for j, state in states if state == "downloading"] or \
+                    [j for j, state in states if state == "queued"]
+            if going:
+                return going[-1]
+            time.sleep(0.2)
+    return None
 
 
 def stream_cells(job):
@@ -376,18 +408,40 @@ def next_step(job, st):
         return f"idm resume {job.id}"
     if code == "NEEDS_TOOL":
         return f"idm resume {job.id}"                  # once yt-dlp is installed
-    if code == "AUTH_REQUIRED":
-        return get_command(job, "--cookies <cookies.txt>")
+    if code == "AUTH_REQUIRED":                         # again, with the user's login
+        again = [*(["-o", job.name] if job.name else []), *kept(job, cookies=False), *kind(job)]
+        return get_command(job.url, job.folder, again) + " --cookies <cookies.txt>"
     links = (st.get("error") or {}).get("links", [])
     if code == "NOT_A_FILE" and len(links) == 1:       # the page links to one file: that one
-        return f"idm get {shlex.quote(links[0])} -d {shlex.quote(job.folder)}"
+        return get_command(links[0], job.folder, kept(job, headers=False))
     return None
 
 
-def get_command(job, extra):
-    """`idm get` for this job's link and destination, plus `extra`."""
-    name = f" -o {shlex.quote(job.name)}" if job.name else ""
-    return f"idm get {shlex.quote(job.url)} -d {shlex.quote(job.folder)}{name} {extra}"
+def get_command(url, folder, options):
+    """`idm get` for this link, into this folder, with these options."""
+    return " ".join(shlex.quote(word) for word in ["idm", "get", url, "-d", folder, *options])
+
+
+def kept(job, headers=True, cookies=True):
+    """A job's options that its next command must keep (running it sets them all again): its
+    login, speed limit and connections.  (Not its headers for another link: an Authorization
+    header is for the job's own server.)"""
+    words = []
+    if headers:
+        words += [w for name, value in job.headers.items() for w in ("--header", f"{name}: {value}")]
+    words += ["--cookies", job.cookies] if job.cookies and cookies else []
+    words += ["--limit", str(job.limit)] if job.limit else []
+    words += ["--connections", str(job.connections)] if job.connections != DEFAULT_CONNECTIONS else []
+    return words
+
+
+def kind(job):
+    """What the job asked for beyond a plain file: the sound alone, a video, the page itself."""
+    if job.audio:
+        words = ["--audio"]
+    else:
+        words = ["--video"] if job.video and not video.is_video(job.url) else []
+    return words + (["--allow-page"] if job.allow_page else [])
 
 
 def percent(st):
@@ -430,9 +484,9 @@ class Output:
         self.emit(reply, lambda: [f"✗ {e}", f"  {reply['error']['hint']}"])
         return exit_code(reply)
 
-    def listing(self, all_jobs, shown=LIST_SHOWS):
-        rows = [brief(j, j.status()) for j in all_jobs[-shown:]]       # the latest, oldest first
-        older = {"older": len(all_jobs) - shown} if len(all_jobs) > shown else {}
+    def listing(self, all_jobs):
+        rows = [brief(j, j.status()) for j in all_jobs[-LIST_SHOWS:]]  # the latest, oldest first
+        older = {"older": len(all_jobs) - LIST_SHOWS} if len(all_jobs) > LIST_SHOWS else {}
         self.emit({"ok": True, "jobs": rows, **older},
                   lambda: [list_line(r) for r in rows] or ["no downloads yet"])
         return 0
@@ -593,8 +647,9 @@ def parser(out):
         c.add_argument("--cookies", metavar="FILE", help="browser cookies (a cookies.txt file)")
         c.add_argument("--allow-page", action="store_true", help="save a web page, not refuse it")
         c.add_argument("--again", action="store_true", help="download again even if already done")
-        c.add_argument("--connections", type=int, default=8, metavar="N",
-                       help=f"download in up to N pieces at once (1-{MAX_CONNECTIONS}, default 8)")
+        c.add_argument("--connections", type=int, default=DEFAULT_CONNECTIONS, metavar="N",
+                       help=f"download in up to N pieces at once (1-{MAX_CONNECTIONS}, "
+                            f"default {DEFAULT_CONNECTIONS})")
         c.add_argument("--at", metavar="TIME", help="start at this time: 02:00, 2am, '2026-11-25 02:00'")
         c.add_argument("--in", dest="in_", metavar="WAIT", help="start after this long: 30m, 2h, 1h30m")
         c.add_argument("--after", metavar="ID", help="start when this download has ended")

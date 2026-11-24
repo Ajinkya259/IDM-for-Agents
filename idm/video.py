@@ -8,7 +8,7 @@ so for these links idm hands the downloading to yt-dlp, and stays the part the a
 talks to: the same JSON, error codes and `next`, the background job, pause, resume,
 cancel, the schedule, the queue, the speed limit, and halo.
 
-    1. ask yt-dlp what the video is: its title, size and file name (saved as video.json)
+    1. ask yt-dlp what the video is: its file name and size (saved as video.json)
     2. let yt-dlp download it from that answer, reading its progress into status.json
 
 A video's picture and sound are joined into one .mp4 (yt-dlp uses ffmpeg for that; without
@@ -24,7 +24,7 @@ import subprocess
 import time
 import urllib.parse
 
-from .engine import read_json
+from .engine import read_json, safe_name
 from .errors import IDMError
 
 VIDEO_SITES = ("youtube.com", "youtu.be", "instagram.com", "tiktok.com", "x.com", "twitter.com",
@@ -38,9 +38,9 @@ NEW_LIMIT = "new limit"                     # (a run stopped because `idm limit`
 PROBLEMS = (
     ("AUTH_REQUIRED", r"sign in|log ?in|cookies|private video|members.only|age.restrict|confirm your age"),
     ("NEEDS_TOOL", r"unable to extract|nsig extraction|please update|is outdated|requested format is not avail"),
-    ("NOT_FOUND", r"unavailable|not available|has been removed|does not exist|no longer|404"),
     ("RATE_LIMITED", r"HTTP Error 429|too many requests"),
     ("SERVER_ERROR", r"HTTP Error 5\d\d"),
+    ("NOT_FOUND", r"unavailable|not available|has been removed|does not exist|no longer|404"),
     ("HTTP_ERROR", r"HTTP Error 4\d\d"),
     ("NOT_A_FILE", r"unsupported url|no video formats|no video could be found|there's no video"),
     ("NETWORK", r"unable to download|timed out|connection (reset|refused|aborted)|temporary failure"
@@ -60,7 +60,7 @@ def download(job, report):
     it carries on from them next time)."""
     tool = yt_dlp()
     about = describe(tool, job)                                          # 1. what is it?
-    report.video(about["title"], about["file"], about["size"])
+    report.video(about["file"], about["size"])
     have = {}                                                            # bytes of each stream
     while True:                                                          # 2. download it (again,
         saved = fetch(tool, job, report, have)                           #    when the limit changes)
@@ -76,8 +76,8 @@ def yt_dlp():
 
 
 def describe(tool, job):
-    """Ask yt-dlp about the video, keep its answer for the download, and return its title,
-    the file it will be saved as, and its size (the sum of its streams; None if unknown)."""
+    """Ask yt-dlp about the video, keep its answer for the download, and return the file it
+    will be saved as and its size (the sum of its streams; None if unknown)."""
     try:
         p = subprocess.run([tool, *choices(tool, job), "--simulate", "--flat-playlist",
                             "--playlist-items", "1:5", "--print", "filename", "--print", "%()j",
@@ -98,8 +98,7 @@ def describe(tool, job):
         f.write(info_json)
     streams = info.get("requested_formats") or [info]
     sizes = [s.get("filesize") or s.get("filesize_approx") for s in streams]
-    return {"title": info.get("title") or info.get("id"), "file": os.path.abspath(file),
-            "size": sum(sizes) if all(sizes) else None}
+    return {"file": os.path.abspath(file), "size": sum(sizes) if all(sizes) else None}
 
 
 def fetch(tool, job, report, have):
@@ -160,9 +159,11 @@ def stop(proc):
 
 def choices(tool, job):
     """yt-dlp's options for this job: where and under what name, which streams, its login."""
-    args = ["--no-playlist", "-P", job.folder, "-o", NAME]
-    if job.audio:
-        args += ["-f", "ba[ext=m4a]/ba"]                     # the sound alone, as it comes
+    stem = os.path.splitext(safe_name(job.name))[0].replace("%", "%%") if job.name else None
+    args = ["--no-playlist", "-P", job.folder, "-o", f"{stem}.%(ext)s" if stem else NAME]
+    if job.audio:                                            # the sound alone; a site without a
+        args += ["-f", "ba[ext=m4a]/ba/b"]                   # sound-only stream sends the video,
+        args += ["-x"] if shutil.which("ffmpeg") else []     # and ffmpeg takes the sound out
     elif shutil.which("ffmpeg"):
         args += ["-S", "res:1080,ext:mp4:m4a", "--merge-output-format", "mp4"]
     else:

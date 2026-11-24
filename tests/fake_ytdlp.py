@@ -8,7 +8,7 @@ The video's id is the link's v= (or its last part):
                         IDM_FAKE_RATE MB/s (default 4), then joined into one .mp4
     unavailable         ERROR: Video unavailable
     private             ERROR: Private video. Sign in if you've been granted access
-    busy                ERROR: HTTP Error 429: Too Many Requests
+    busy                ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests
     playlist            a playlist of 3 videos
 
 Like yt-dlp, it carries on from a stream's .part file, and IDM_FAKE_LOG (if set) gets a

@@ -19,6 +19,7 @@ A small local server that misbehaves on purpose, for testing idm.
     /secret.bin     the same file, but only with the cookie session=ok or the header
                     "Authorization: Bearer ok"; otherwise 403
     /page.html      a web page, not a file
+    /empty-416.bin  an empty file, answered as nginx does (416 with an error page)
     /redirect?to=URL  a redirect (302) to URL
     /status/CODE    answers with that status code (429 and 503 say Retry-After: 1)
     /stats          {"peak": most connections at once on /test.bin, "requests": how many}
@@ -63,6 +64,12 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/redirect":
             to = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("to", [""])[0]
             return self.reply(302, b"", {"Location": to})
+        if route == "/empty-416.bin":                       # an empty file, as nginx answers for
+            if self.headers.get("Range"):                   # it: 416, with an error page
+                return self.reply(416, b"<html><body><h1>416 Requested Range Not Satisfiable</h1>"
+                                       b"</body></html>",
+                                  {"Content-Type": "text/html", "Content-Range": "bytes */0"})
+            return self.reply(200, b"", {"Content-Type": "application/octet-stream"})
         if route == "/login":                               # where a private share link ends up
             return self.reply(200, b"<html><body><form>Sign in</form></body></html>",
                               {"Content-Type": "text/html; charset=utf-8"})

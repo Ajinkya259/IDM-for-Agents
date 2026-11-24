@@ -30,13 +30,14 @@ export const register: Register = on => {
 
   // tool.run: after the person allowed the command, so the face never waits on a prompt.
   on('tool.run', { tool: 'Bash', command: MAYBE_IDM }, async ($, e, next) => {
-    const target = watchTarget(e.command)
-    if (!target) {
+    const watch = watchTarget(e.command)
+    if (!watch) {
       return next(e)
     }
     const watcher = $.process.spawn({
-      argv: ['python3', '-m', 'idm', 'watch', target, '--cells'],
+      argv: ['python3', '-m', 'idm', 'watch', watch.target, '--cells'],
       cwd: $.plugin.root, // idm lives in this plugin's folder (and nothing else named idm runs)
+      env: watch.env, // the command's own IDM_HOME, if it sets one: where its jobs are
     })
     const run = { until: Infinity }
     void show($, e.tool_use_id, watcher, frames, run)
@@ -82,13 +83,16 @@ export const register: Register = on => {
 }
 
 /** What `idm watch` should follow for a shell command: the job of `idm wait ID`, or the link of
- *  `idm get LINK` (the first argument that isn't an option).  null when no part of the command
- *  runs either. */
-export function watchTarget(command: string): string | null {
+ *  `idm get LINK` (the first argument that isn't an option), and the IDM_HOME the command sets
+ *  for itself, if any.  null when no part of the command runs either. */
+export function watchTarget(command: string): { target: string; env: Record<string, string> } | null {
   for (const words of commands(command)) {
     let i = 0
-    while (/^\w+=/.test(words[i] ?? '')) {
-      i += 1 // VAR=value before the program
+    const env: Record<string, string> = {} // VAR=value before the program (its IDM_HOME: where its jobs are)
+    for (let set; (set = /^(\w+)=(.*)$/s.exec(words[i] ?? '')); i += 1) {
+      if (set[1] === 'IDM_HOME') {
+        env.IDM_HOME = set[2] ?? ''
+      }
     }
     if (/^python3?$/.test(words[i] ?? '') && words[i + 1] === '-m') {
       i += 2 // python3 -m idm
@@ -101,7 +105,7 @@ export function watchTarget(command: string): string | null {
       if (TAKES_VALUE.has(word)) {
         j += 1 // skip the option's value too
       } else if (!word.startsWith('-')) {
-        return word
+        return { target: word, env }
       }
     }
   }

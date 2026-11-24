@@ -23,7 +23,7 @@ HINTS = {
                      "who has the link.",
     "NOT_A_FILE": "This link opens a web page, not a file. `links` lists the files the page links "
                   "to: download the one the user means (`next` does, when there is just one), or "
-                  "ask. Use yt-dlp for a video page. Only if the user wants the page itself, add "
+                  "ask. For a video page, add --video. Only if the user wants the page itself, add "
                   "--allow-page.",
     "HTTP_ERROR": "The server refused the request. Check the link, or ask the user.",
     "RATE_LIMITED": "The server is limiting requests. idm already waited and retried; "
@@ -50,15 +50,15 @@ HINTS = {
 
 AUTO_RETRY = {"RATE_LIMITED", "SERVER_ERROR", "NETWORK"}                  # idm retries these itself
 RETRYABLE = AUTO_RETRY | {"FILE_CHANGED", "DISK_FULL", "INTERRUPTED"}      # worth the agent trying again
-TRIES = int(os.environ.get("IDM_TRIES", "8"))         # failures in a row before giving up
+TRIES = int(os.environ.get("IDM_TRIES", "8"))         # retries in a row before giving up
 PATIENCE = float(os.environ.get("IDM_PATIENCE", "120"))   # seconds with no byte at all: give up
 
 
 def gave_up(error, silent_for=None):
-    """The error to report when idm stops retrying: after TRIES failures in a row, or (for a
+    """The error to report when idm stops retrying: after TRIES retries in a row, or (for a
     server that has gone silent) after PATIENCE seconds without a single byte."""
     why = (f"nothing arrived for {how_long(silent_for)}" if silent_for is not None
-           else f"gave up after {TRIES} tries")
+           else f"gave up after {TRIES + 1} tries")
     return IDMError(error.code, f"{error} ({why})", error.retry_after)
 
 
