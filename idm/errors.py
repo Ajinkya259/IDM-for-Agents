@@ -39,6 +39,10 @@ HINTS = {
     "INTERRUPTED": "The download process stopped unexpectedly. Run `next` to carry on from "
                    "where it stopped.",
     "NO_SUCH_JOB": "There is no download with that id or link. Run `idm list` to see them.",
+    "NEEDS_TOOL": "Video sites need yt-dlp (and ffmpeg, for the best quality). Ask the user to "
+                  "install it: `brew install yt-dlp ffmpeg` or `pipx install yt-dlp`; if it's "
+                  "installed, update it (`yt-dlp -U`, or `pipx upgrade yt-dlp`): sites change "
+                  "often. Then run `next`.",
     "INTERNAL": "This is a bug in idm. Tell the user; the details are in the job's worker.log.",
 }
 

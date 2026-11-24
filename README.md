@@ -1,6 +1,6 @@
 # IDM for Agents
 
-A download manager made for AI agents. `idm` gives an agent one line of JSON per step, a fixed error code with the exact command to run next, and never saves an error page as your file. Written from scratch in Python 3.9+, with nothing else to install.
+A download manager made for AI agents: files, and videos from YouTube, Instagram and more. `idm` gives an agent one line of JSON per step, a fixed error code with the exact command to run next, and never saves an error page as your file. Written from scratch in Python 3.9+, with nothing else to install.
 
 <img src="docs/halo-download.gif" width="560" alt="halo during a download: a lavender face inside a ring of 32 dots. The dots fly home one by one as the percent rises, the caption shows MB done, speed, 8 connections and time left, and at 100% the face cheers.">
 
@@ -24,11 +24,14 @@ As a Claude Code plugin, which adds a skill (when to use idm, what to do on each
 $ idm get https://example.com/big.iso -d ~/Downloads
 {"ok": true, "job": "3f9a1c", "state": "downloading", "percent": 7, "eta": 158, "next": "idm wait 3f9a1c"}
 
+idm get https://youtu.be/ID       a video (Instagram reels, TikTok, X... too); --audio for the sound
 idm start URL --at 02:00          start at 2 am (or --in 2h)
 idm start URL --after 3f9a1c      start once that download has ended
 idm start URL --limit 2M          at most 2 MB a second (idm limit ID changes it as it runs)
 idm wait | status | pause | resume | cancel ID      idm list      idm watch
 ```
+
+Watching in a terminal, space pauses and resumes, and q leaves it running. Videos need [yt-dlp](https://github.com/yt-dlp/yt-dlp) (`brew install yt-dlp ffmpeg`).
 
 <img src="docs/halo-in-claude-code.gif" width="720" alt="A Claude Code session. The user says: download this. The agent loads the idm skill and runs idm get; halo fills its ring under the command, then the command returns one JSON object and the agent tells the user where the file is.">
 
@@ -41,7 +44,7 @@ idm wait | status | pause | resume | cancel ID      idm list      idm watch
 
 ## Tested
 
-136 checks in `tests/run_tests.py`, and an eval in which real Claude Code agents download from a server that misbehaves on purpose. With idm, 28 of 28 runs got the right file or told the user why; with plain curl, 26 of 28 (twice it saved the server's error reply as the file and called it done). On a slow server, idm took 112 s where curl took 207 s.
+156 checks in `tests/run_tests.py`, and an eval in which real Claude Code agents download from a server that misbehaves on purpose. With idm, 28 of 28 runs got the right file or told the user why; with plain curl, 26 of 28 (twice it saved the server's error reply as the file and called it done). On a slow server, idm took 112 s where curl took 207 s.
 
 ## More
 

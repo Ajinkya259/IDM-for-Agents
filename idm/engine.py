@@ -43,6 +43,10 @@ class Report:
 
     def retrying(self, error, wait): """`error` happened; trying again in `wait` seconds."""
 
+    def video(self, title, file, size): """yt-dlp described the video: it will be saved as `file`."""
+
+    def parts(self, paths): """yt-dlp is downloading into these files (its streams)."""
+
 
 # ---- the whole download, step by step -------------------------------------------------------
 def download(job, report):

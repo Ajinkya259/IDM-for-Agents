@@ -1,6 +1,6 @@
 ---
 name: idm
-description: Download files from links with idm, a download manager made for agents. Use it whenever the user asks to download, fetch, grab or save a file from a URL (a dataset, video, installer, PDF, archive, model weights), or pastes a link to a file, instead of curl or wget.
+description: Download files and videos from links with idm, a download manager made for agents. Use it whenever the user asks to download, fetch, grab or save something from a URL (a dataset, installer, PDF, archive, model weights, a YouTube video, an Instagram reel, a TikTok), or pastes a link to one, instead of curl, wget or yt-dlp.
 ---
 
 # Downloading with idm
@@ -23,7 +23,11 @@ something to run next, the reply has `next`: the exact command.
      when; there is nothing to run until then.
    - `"state": "queued"`: it is waiting its turn (`waiting_for` says for what). Run `next`.
    - `"ok": false`: look up `error.code` below, and run `next` when there is one.
-3. Don't switch to curl or wget when idm reports an error: the error already says what is
+3. Video links (YouTube, Instagram reels, TikTok, X, Vimeo, Facebook, Reddit...) work the same
+   way: `idm get LINK -d FOLDER`. The file is named after the video's title. `--audio` gets the
+   sound alone. A playlist link fails with `NOT_A_FILE` and `links` (its first videos): pick
+   the one the user means, or ask. For a video on another site, add `--video`.
+4. Don't switch to curl or wget when idm reports an error: the error already says what is
    wrong, and the other tool would only hit the same wall (or save an error page as the file).
 
 ## When it fails
@@ -34,8 +38,9 @@ something to run next, the reply has `next`: the exact command.
 | `FILE_CHANGED` | The file changed on the server while it downloaded. Run `next`: it starts over with the new version. |
 | `INTERRUPTED` | The background download stopped (killed, or the computer slept). Run `next`: it carries on from where it was. |
 | `NOT_FOUND` | The link is wrong or has expired. Tell the user and ask for a fresh link. Don't guess other links. |
-| `AUTH_REQUIRED` | The site wants a login. Ask the user to export their browser cookies as a `cookies.txt` file (a "Get cookies.txt" browser extension does it) and tell you where it is; then run `next` with that path in place of `<cookies.txt>`. A token works too: `--header 'Authorization: Bearer TOKEN'`. |
+| `AUTH_REQUIRED` | The site wants a login (for videos: a private video, or Instagram, which often wants one). Ask the user to export their browser cookies as a `cookies.txt` file (a "Get cookies.txt" browser extension does it) and tell you where it is; then run `next` with that path in place of `<cookies.txt>`. A token works too: `--header 'Authorization: Bearer TOKEN'`. |
 | `NOT_A_FILE` | The link opens a web page, not a file. `error.links` lists the files that page links to: when there is one, `next` downloads it; when there are several, pick the one the user means or ask. None? Look at the page yourself, or ask. Use `--allow-page` only if the user clearly wants the page itself. |
+| `NEEDS_TOOL` | Video sites need yt-dlp. Ask the user to install it (`brew install yt-dlp ffmpeg`, or `pipx install yt-dlp`), or to update it if it's there (`yt-dlp -U`); then run `next`. |
 | `TLS` | The site's certificate can't be verified. Tell the user; don't work around it. |
 | `DISK_FULL` | Tell the user; after they free space, run `next`. |
 | `NO_PERMISSION`, `WRITE_FAILED` | Pick another folder with `-d`. |
@@ -61,7 +66,7 @@ something to run next, the reply has `next`: the exact command.
   deletes the partial file; a finished file stays).
 - Options for get/start: `-o NAME`, `-d FOLDER`, `--header 'Name: value'`,
   `--cookies FILE`, `--connections N` (1-16, default 8), `--again` (download again),
-  `--at`, `--in`, `--after`, `--limit`.
+  `--at`, `--in`, `--after`, `--limit`, `--audio`, `--video`.
 - Exit codes: 0 fine, 1 failed, 2 bad command, 3 failed but worth retrying (run `next`).
 - The person sees the download as halo, an animated face, in their terminal; you only need
   the JSON.

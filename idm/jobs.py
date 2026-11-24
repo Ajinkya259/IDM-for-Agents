@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import engine
+from . import engine, video
 from .engine import read_json, write_json
 from .errors import IDMError, classify
 
@@ -53,6 +53,8 @@ class Job:
     starts_at: Optional[float] = None              # --at / --in: not before this time
     after: Optional[str] = None                    # --after: not before this job has ended
     limit: Optional[int] = None                    # --limit: at most this many bytes a second
+    video: bool = False                            # a video site's page: yt-dlp downloads it
+    audio: bool = False                            # --audio: the video's sound alone
     created: float = field(default_factory=time.time)
 
     @property
@@ -159,10 +161,12 @@ def cancel(job):
     if job.status().get("state") == "done":
         return
     stop(job)
-    final = job.status().get("file")
-    for leftover in (f"{final}.part", f"{final}.part.json") if final else ():
-        if os.path.exists(leftover):
-            os.remove(leftover)
+    st = job.status()
+    final = st.get("file")
+    mine = video.leftovers(st.get("parts")) if job.video else \
+        (path for path in (f"{final}.part", f"{final}.part.json") if final and os.path.exists(path))
+    for leftover in list(mine):
+        os.remove(leftover)
     job.set_status(state="cancelled")
 
 
@@ -194,7 +198,7 @@ def work(job):
             job = wait_for_turn(job, status)
             with a_place(job, status):
                 status.begin()
-                path = engine.download(job, status)
+                path = (video.download if job.video else engine.download)(job, status)
         except KeyboardInterrupt:
             status.end("paused")
         except Exception as e:
@@ -291,6 +295,13 @@ class StatusReport(engine.Report):
         self.size = remote.size
         self.job.set_status(state="downloading", file=part.final, size=remote.size,
                             can_resume=remote.can_resume)
+
+    def video(self, title, file, size):
+        self.size = size
+        self.job.set_status(file=file, size=size, title=title, can_resume=True)
+
+    def parts(self, paths):
+        self.job.set_status(parts=paths)              # (what `idm cancel` deletes)
 
     def leftovers(self, why_discarded, have):
         note = f"starting over: {why_discarded}" if why_discarded else (

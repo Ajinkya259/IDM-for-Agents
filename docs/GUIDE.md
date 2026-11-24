@@ -1,6 +1,6 @@
 # IDM for Agents: the guide
 
-Everything about idm in more detail than the [README](../README.md): the plugin's parts, the eval, halo, how a download works, scheduling and the queue, servers that go silent, the agent contract, every error code, how the code is laid out, and the tests.
+Everything about idm in more detail than the [README](../README.md): the plugin's parts, the eval, halo, how a download works, videos, scheduling and the queue, servers that go silent, the agent contract, every error code, how the code is laid out, and the tests.
 
 ## The plugin's parts
 
@@ -71,9 +71,17 @@ A run costs real tokens (a few cents to half a dollar with Sonnet). Each run's c
 **In a terminal.** `idm get` and `idm wait` show halo instead of the progress line, in a true-colour terminal at least 56 × 23. A smaller one still gets the line. `idm watch` is for a second terminal while an agent works:
 
 ```
-bin/idm watch                   every download, as it happens, until Ctrl+C
-bin/idm watch ID                that one, until it ends (a link works too)
+idm watch                   every download, as it happens, until q or Ctrl+C
+idm watch ID                that one, until it ends (a link works too)
 ```
+
+While a person watches (`get`, `wait` or `watch` in a terminal), keys work, and the face says which:
+
+| Key | What it does |
+|---|---|
+| space | pause, or resume a paused one (it stays on screen) |
+| p, r | pause; resume |
+| q | stop watching; the download carries on in the background |
 
 Ctrl+C in `get` pauses the download. In `wait` or `watch` it only stops watching.
 
@@ -112,6 +120,18 @@ The colours are the "lavender" set picked from `mockups/experiments.py`. The loo
 A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3's notes](https://github.com/Ajinkya259/IDM-for-Agents/blob/f5c8106/phase3/README.md#how-it-works) for the diagram.
 
 When the server pushes back, an extra connection hands its piece to the others, **rests (1, 2, 4… s) and comes back**, rather than leaving for good. idm's first request asks for one byte, so it doesn't hold a place the server could give a real connection. On a server that allows 2 connections at once, 8 MB went from 8.5 s to 5.3 s.
+
+## Videos: YouTube, Instagram reels and more
+
+A link to YouTube, youtu.be, Instagram, TikTok, X, Vimeo, Facebook, Reddit, Twitch, Dailymotion or Threads opens a page with a player, not a file. The video sits behind the site's own machinery: signed links that expire, the picture and the sound as separate streams, and changes every few weeks. [yt-dlp](https://github.com/yt-dlp/yt-dlp) keeps up with all of that, so for these links idm hands the downloading to yt-dlp. idm stays the part the agent talks to, with the same JSON, codes and `next`, the background job, pause and resume, cancel, the schedule, the queue, the limit, and halo.
+
+1. **What is it?** idm asks yt-dlp about the video: its title, its streams and their sizes, and the file it will become, `Title [id].mp4`. It keeps the answer, so the download doesn't ask the site twice.
+2. **Download it.** yt-dlp downloads from that answer, and idm reads its progress line by line into `status.json`, which is what halo draws. The picture and sound are joined into one `.mp4` (by ffmpeg; without ffmpeg, idm asks for the best video that comes as one file). `--audio` gets the sound alone.
+3. **Pause, resume, cancel, limit.** Pausing ends yt-dlp, which leaves its `.part` files, and resuming carries on from them. Cancel deletes them. A new `idm limit` restarts yt-dlp at the new speed, carrying on.
+
+What yt-dlp says when it fails becomes one of idm's codes: a removed or private video is `NOT_FOUND` or `AUTH_REQUIRED` (Instagram often wants the browser's cookies), a 429 is `RATE_LIMITED`, a playlist is `NOT_A_FILE` with its first videos in `links`. No yt-dlp, or one too old for the site, is `NEEDS_TOOL`. For a video on a site not in the list, `--video` sends the link to yt-dlp anyway.
+
+yt-dlp needs installing (`brew install yt-dlp ffmpeg`, or `pipx install yt-dlp`); everything else in idm is the standard library. What you may download is up to each site's terms and the video's owner.
 
 ## Later, in order, and not too fast
 
@@ -221,6 +241,7 @@ $ idm get https://example.com/members/report.pdf
 | `FILE_CHANGED` | the file changed on the server mid-download (or got smaller: 416) | yes (starts over) |
 | `DISK_FULL`, `NO_PERMISSION`, `WRITE_FAILED` | our side | full: yes; the others: no |
 | `INTERRUPTED` | the background process died (killed, machine slept) | yes (resumes) |
+| `NEEDS_TOOL` | a video link, and yt-dlp is missing or too old for the site | no (`next` carries on once it's installed) |
 | `NO_SUCH_JOB` | an unknown job id | no |
 | `INTERNAL` | a bug in idm | no |
 
@@ -242,6 +263,7 @@ $ idm get https://example.com/members/report.pdf
 | `idm/crew.py` | Many connections on one file: `Missing` (the pieces, and splitting the biggest) and `Crew` (the connections). |
 | `idm/errors.py` | The error codes, their hints, `classify()` (any exception as a code), and the retry waits. |
 | `idm/when.py` | Times and speeds: reads `--at`, `--in` and `--limit`, and says times the way people do. |
+| `idm/video.py` | Videos: hands video-site links to yt-dlp and reads its progress; its failures as idm's codes. |
 | `hooks/halo.tsx` | The Claude Code mod. It starts `idm watch --cells` for the agent's command and paints the frames. |
 | `.claude-plugin/` | `plugin.json` makes the repo a Claude Code plugin; `marketplace.json`, a marketplace of one. |
 | `pyproject.toml` | Makes `idm` a command you can install with pipx or pip. |
@@ -256,7 +278,9 @@ A job's folder holds:
 ## Tests
 
 ```
-python3 tests/run_tests.py        # 136 checks: every command and error code, the pieces, halo, the critic's finds, the queue
+python3 tests/run_tests.py        # 156 checks: every command and error code, the pieces, halo, the queue, videos, keys
 claude plugin test .              # the mod: which commands it watches, the face under them
 python3 tests/testserver.py       # the misbehaving local server on its own, to try things by hand
 ```
+
+The video tests use `tests/fake_ytdlp.py`, a stand-in that answers like yt-dlp for made-up videos, so they need no internet. Real videos (YouTube, a playlist, dead and private links) were checked by hand.

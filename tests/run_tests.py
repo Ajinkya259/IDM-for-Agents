@@ -161,9 +161,10 @@ def wait_until(condition, timeout=10):
     return False
 
 
-def in_terminal(args, env, interrupt_after=None, timeout=60, size=(40, 100)):
-    """Run idm in a pseudo-terminal (rows, columns), as a person would.  Returns (exit code,
-    what was shown)."""
+def in_terminal(args, env, interrupt_after=None, timeout=60, size=(40, 100), keys=()):
+    """Run idm in a pseudo-terminal (rows, columns), as a person would, pressing `keys`
+    ((seconds, key), ...) on the way.  Returns (exit code, what was shown)."""
+    keys = list(keys)
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", *size, 0, 0))
     p = subprocess.Popen([*IDM, *args], env=env, stdin=slave, stdout=slave, stderr=slave,
@@ -174,6 +175,8 @@ def in_terminal(args, env, interrupt_after=None, timeout=60, size=(40, 100)):
         if interrupt_after and not sent and time.time() - start > interrupt_after:
             p.send_signal(signal.SIGINT)
             sent = True
+        while keys and time.time() - start > keys[0][0]:
+            os.write(master, keys.pop(0)[1].encode())
         ready, _, _ = select.select([master], [], [], 0.1)
         if ready:
             try:
@@ -813,7 +816,7 @@ def watch_for_an_agent_replies_like_wait():
 def person_sees_halo():
     srv, box = Server(size=4, rate=1), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env)
-    redraws = shown.count("\x1b[20F")
+    redraws = shown.count(f"\x1b[{halo.ROWS + 1}F")             # the face, and the keys under it
     check("in a big true-colour terminal: halo is drawn and redrawn in place, ends happy, then ✓",
           code == 0 and FACE_COLOUR in shown and redraws > 5 and "▽" in shown     # ▽: joy
           and "✓ saved" in shown, (code, redraws, shown[-300:]))
@@ -1050,6 +1053,142 @@ def halo_says_when_and_what_it_waits_for():
     stuck = lines(state="downloading", bytes=5, size=10, speed=0, stalled=12,
                   trouble={"code": "NETWORK", "message": "timed out", "retry_in": 2})
     check("stalled: how long nothing has come", stuck[2] == "nothing for 12s · timed out · retrying in 2s", stuck)
+
+
+# ---- phase 7: videos (YouTube, reels...), with a stand-in for yt-dlp ----------------------------
+FAKE_YTDLP = str(HERE / "fake_ytdlp.py")
+CLIP = "Test clip [ok].mp4"
+
+
+def clip_sha(audio_only=False):
+    """What the stand-in's video is, byte for byte: its picture stream, then its sound."""
+    streams = ((1_000_000, 241),) if audio_only else ((2_000_000, 251), (1_000_000, 241))
+    whole = b"".join((bytes(i % p for i in range(p)) * (n // p + 1))[:n] for n, p in streams)
+    return hashlib.sha256(whole).hexdigest()
+
+
+@test
+def youtube_link_downloads_through_ytdlp():
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP)
+    code, r = box.get("https://www.youtube.com/watch?v=ok")
+    f = box.dl / CLIP
+    check("a YouTube link: done, saved under the video's title", code == 0 and r.get("state") == "done"
+          and r.get("file") == str(f), r)
+    check("its picture and sound, joined, byte for byte, and nothing else left",
+          f.exists() and sha(f) == clip_sha() and box.files() == [CLIP], box.files())
+    st = box.status_file(r.get("job", "?"))
+    check("the status has the title and the size, for halo", st.get("title") == "Test clip"
+          and st.get("size") == 3_000_000, st)
+
+
+@test
+def reels_and_other_video_sites():
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP)
+    code, r = box.get("https://www.instagram.com/reel/ok/")
+    check("an Instagram reel goes through yt-dlp too", r.get("state") == "done", r)
+    code, r = box.get("https://youtu.be/ok", "--audio", "--again")
+    check("--audio: the sound alone", r.get("state") == "done" and r.get("file", "").endswith(".m4a")
+          and sha(Path(r["file"])) == clip_sha(audio_only=True), r)
+    srv = Server()
+    code, r = box.get(srv.url(), "-o", "plain.bin")
+    check("an ordinary file still uses idm's own connections", r.get("state") == "done"
+          and sha(box.dl / "plain.bin") == srv.sha(), r)
+
+
+@test
+def video_errors_have_codes():
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP)
+    for vid, want, exit_code in (("unavailable", "NOT_FOUND", 1), ("private", "AUTH_REQUIRED", 1),
+                                 ("busy", "RATE_LIMITED", 3)):
+        code, r = box.get(f"https://www.youtube.com/watch?v={vid}")
+        check(f"yt-dlp says {vid}: {want}, exit {exit_code}",
+              code == exit_code and r.get("error", {}).get("code") == want, r)
+        if want == "AUTH_REQUIRED":
+            check("...and `next` asks for the browser's cookies", "--cookies" in r.get("next", ""), r)
+    code, r = box.get("https://www.youtube.com/playlist?list=playlist")
+    e = r.get("error", {})
+    check("a playlist: NOT_A_FILE, with its videos' links to pick from",
+          e.get("code") == "NOT_A_FILE" and len(e.get("links", [])) == 3, r)
+
+
+@test
+def no_ytdlp_says_how_to_get_it():
+    box = Sandbox(IDM_YT_DLP="/nowhere/yt-dlp")
+    code, r = box.get("https://youtu.be/ok")
+    e = r.get("error", {})
+    check("no yt-dlp: NEEDS_TOOL, the hint says how to install it, `next` carries on after",
+          e.get("code") == "NEEDS_TOOL" and "install yt-dlp" in e.get("hint", "")
+          and r.get("next") == f"idm resume {r.get('job')}", r)
+
+
+@test
+def video_pause_resume_and_cancel():
+    log = Path(tempfile.mkdtemp()) / "fake.log"
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP, IDM_FAKE_RATE="0.5", IDM_FAKE_LOG=str(log))
+    code, r = box.start("https://youtu.be/ok")
+    job = r.get("job", "?")
+    wait_until(lambda: (box.status_file(job).get("bytes") or 0) > 600_000, 15)
+    code, p = box.idm("pause", job)
+    check("pause a video: paused, part-way, its .part kept",
+          p.get("state") == "paused" and 0 < p.get("percent", 0) < 100
+          and any(f.endswith(".part") for f in box.files()), (p, box.files()))
+    code, q = box.idm("resume", job)
+    code, w = box.idm("wait", job, "--max", "60")
+    starts = log.read_text().splitlines()
+    check("resume: it carries on from where it was (not from 0), and the file is right",
+          w.get("state") == "done" and sha(box.dl / CLIP) == clip_sha()
+          and starts[0] == "f1.mp4 from 0" and int(starts[1].split()[-1]) > 0, starts)
+    code, r = box.start("https://youtu.be/two")
+    job = r.get("job", "?")
+    wait_until(lambda: (box.status_file(job).get("bytes") or 0) > 300_000, 15)
+    code, c = box.idm("cancel", job)
+    check("cancel a video: cancelled, and its streams' .part files are gone",
+          c.get("state") == "cancelled" and box.files() == [CLIP], box.files())
+
+
+@test
+def video_limit_changes_while_it_runs():
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP, IDM_FAKE_RATE="20")
+    code, r = box.start("https://youtu.be/ok", "--limit", "300K")
+    job = r.get("job", "?")
+    time.sleep(2)
+    slow = box.status_file(job)
+    code, off = box.idm("limit", job, "0")
+    code, w = box.idm("wait", job, "--max", "30")
+    check("--limit holds a video back, and idm limit ID 0 lets it go (yt-dlp restarted, carrying on)",
+          (slow.get("bytes") or 0) < 1_200_000 and w.get("state") == "done"
+          and sha(box.dl / CLIP) == clip_sha(), (slow.get("bytes"), w))
+
+
+# ---- phase 7: keys for a person watching -------------------------------------------------------
+@test
+def person_space_pauses_and_resumes():
+    srv, box = Server(size=3, rate=0.5), Sandbox()
+    code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl), "--connections", "1"], box.env,
+                              keys=((1.5, " "), (4, " ")))
+    check("space pauses (it says how to resume), space again resumes, and it finishes",
+          code == 0 and "space resume" in shown and "✓ saved" in shown
+          and sha(box.dl / "halo test.bin") == srv.sha(), shown[-300:])
+
+
+@test
+def person_q_leaves_it_running():
+    srv, box = Server(size=3, rate=0.5), Sandbox()
+    t0 = time.time()
+    code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl), "--connections", "1"], box.env,
+                              keys=((1, "q"),))
+    check("q: stops watching at once, and says the download carries on",
+          code == 0 and time.time() - t0 < 5 and "in the background" in shown, shown[-300:])
+    job = next((box.root / "home" / "jobs").iterdir()).name
+    check("...and it does carry on, to the end",
+          wait_until(lambda: box.status_file(job).get("state") == "done", 20))
+
+
+@test
+def person_sees_the_keys_under_halo():
+    srv, box = Server(size=3, rate=0.5), Sandbox(**TRUE_COLOUR)
+    code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, keys=((1, "q"),))
+    check("the keys are written under the face", "space pause" in shown, shown[-300:])
 
 
 def main():

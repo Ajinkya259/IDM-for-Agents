@@ -21,14 +21,18 @@ An agent's `get` and `wait` reply within 90 seconds, so its tool call is never c
 Exit codes: 0 fine, 1 failed, 2 bad command, 3 failed but worth retrying (run `next`).
 """
 import argparse
+import contextlib
 import json
 import os
+import select
 import shlex
 import sys
+import termios
 import time
+import tty
 import urllib.parse
 
-from . import __version__, halo, jobs, when
+from . import __version__, halo, jobs, video, when
 from .errors import RETRYABLE, IDMError, from_disk
 
 AGENT_WAIT = 90     # seconds an agent's get/wait may take (tool calls are cut off at ~120 s)
@@ -94,15 +98,21 @@ def cmd_pause(args, out):
 
 def cmd_resume(args, out):
     job = jobs.load(args.id)
+    resume(job, now=args.now)
+    return out.result(job, job.status())
+
+
+def resume(job, now=False):
+    """Carry on with a paused or failed job (now: without waiting for its time or the job it
+    follows)."""
     with jobs.locked(jobs.HOME / "jobs.lock"):         # two resumes at once start one worker
-        if args.now and (job.starts_at or job.after):
+        if now and (job.starts_at or job.after):
             job.starts_at = job.after = None           # a waiting worker sees it within a second
             job.save()
             if job.status().get("state") == "scheduled":
                 job.set_status(state="queued", starts_at=None)
         if job.status().get("state") not in (*jobs.ACTIVE, "done"):
             jobs.start(job)
-    return out.result(job, job.status())
 
 
 def cmd_limit(args, out):
@@ -177,7 +187,8 @@ def options(args):
                                     f"not {args.connections}")
     after = jobs.load(args.after).id if args.after else None   # (NO_SUCH_JOB if there's none)
     return {"headers": headers, "cookies": cookies, "allow_page": args.allow_page,
-            "connections": args.connections, "after": after,
+            "connections": args.connections, "after": after, "audio": args.audio,
+            "video": args.video or args.audio or video.is_video(args.url),
             "starts_at": checked(when.start_time, args.at, args.in_),
             "limit": checked(when.rate, args.limit) if args.limit else None}
 
@@ -193,21 +204,67 @@ def checked(read, *values):
 def follow(job, limit, out, pause_on_ctrl_c=False):
     """Watch a job until it ends (done, failed, paused, cancelled) or `limit` seconds pass,
     showing people a progress line.  A scheduled job is not waited for: that could be hours.
-    Ctrl+C pauses the download (get) or stops watching (wait)."""
+
+    A person watching has keys (Keys): space pauses and resumes, q stops watching.  A job
+    they paused stays on screen, to resume.  Ctrl+C pauses the download (get) or stops
+    watching (wait)."""
     deadline = None if limit is None else time.time() + limit
-    try:
-        while True:
-            st = job.status()
-            out.progress(st)
-            over = deadline is not None and time.time() >= deadline
-            if st.get("state") in (*jobs.FINAL, "scheduled") or over:
-                return st
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        out.stopped = True
-        if pause_on_ctrl_c:
-            jobs.stop(job)
-        return job.status()
+    with out.listening() as keys:
+        try:
+            while True:
+                st = job.status()
+                out.progress(st)
+                key = keys.pressed()
+                if key == "q":
+                    out.stopped = True
+                    return st
+                if key:
+                    press(job, st, key)
+                    continue
+                over = deadline is not None and time.time() >= deadline
+                ends = ("done", "failed", "cancelled", "scheduled") if keys.on else \
+                       (*jobs.FINAL, "scheduled")
+                if st.get("state") in ends or over:
+                    return st
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            out.stopped = True
+            if pause_on_ctrl_c:
+                jobs.stop(job)
+            return job.status()
+
+
+def press(job, st, key):
+    """A person's key while they watch: space pauses or resumes, p pauses, r resumes."""
+    state = st.get("state")
+    if key in " p" and state in jobs.ACTIVE:
+        jobs.stop(job)
+    elif key in " r" and state in ("paused", "failed", "new"):
+        resume(job)
+
+
+class Keys:
+    """Single key presses from a person's terminal, read without waiting (nothing at all when
+    an agent runs idm, or when the input isn't a terminal)."""
+
+    def __init__(self, on):
+        self.on, self.saved = on and sys.stdin.isatty(), None
+
+    def __enter__(self):
+        if self.on:
+            self.saved = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin)                   # keys as they are pressed; Ctrl+C still works
+        return self
+
+    def __exit__(self, *exc):
+        if self.saved:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.saved)
+
+    def pressed(self):
+        """The key pressed since last time (lowercase), or None."""
+        if not self.on or not select.select([sys.stdin], [], [], 0)[0]:
+            return None
+        return os.read(sys.stdin.fileno(), 1).decode(errors="ignore").lower() or None
 
 
 def find_job(target):
@@ -317,6 +374,8 @@ def next_step(job, st):
         return f"idm wait {job.id}"
     if state in ("paused", "new") or (state == "failed" and code in RETRYABLE):
         return f"idm resume {job.id}"
+    if code == "NEEDS_TOOL":
+        return f"idm resume {job.id}"                  # once yt-dlp is installed
     if code == "AUTH_REQUIRED":
         return get_command(job, "--cookies <cookies.txt>")
     links = (st.get("error") or {}).get("links", [])
@@ -352,7 +411,8 @@ class Output:
         self.json, self.line_drawn = json_mode, False
         self.face = None if json_mode or not halo.fits() else halo.Halo()
         self.face_rows = 0                                 # how many rows of it are on screen
-        self.stopped = False                               # the person pressed Ctrl+C
+        self.stopped = False                               # the person pressed Ctrl+C (or q)
+        self.keys = False                                  # a person's keys work (show them)
 
     def wait_limit(self, asked):
         """How long get/wait may watch: as asked; else forever for a person, 90 s for an agent."""
@@ -377,17 +437,31 @@ class Output:
                   lambda: [list_line(r) for r in rows] or ["no downloads yet"])
         return 0
 
+    @contextlib.contextmanager
+    def listening(self):
+        """A person's keys, while a download shows."""
+        with Keys(not self.json) as keys:
+            self.keys = keys.on
+            try:
+                yield keys
+            finally:
+                self.keys = False
+
     def progress(self, st):
         if self.face:
             self.draw_face(st)
         elif not self.json:
-            sys.stdout.write("\r  " + progress_line(st) + "\x1b[K")
+            hint = f"   ({key_hint(st)})" if self.keys and key_hint(st) else ""
+            sys.stdout.write("\r  " + progress_line(st) + hint + "\x1b[K")
             sys.stdout.flush()
             self.line_drawn = True
 
     def draw_face(self, st, settle=False):
-        """Draw halo over the one drawn last."""
+        """Draw halo over the one drawn last (with the keys under it, while they work)."""
         rows = self.face.draw(st, time.time(), settle).ansi()
+        if self.keys or self.face_rows > len(rows):        # (a blank row clears the keys after)
+            hint = "" if settle or not self.keys else key_hint(st)
+            rows.append(f"\x1b[2m{hint.center(halo.COLUMNS)}\x1b[0m")
         up = f"\x1b[{self.face_rows}F" if self.face_rows else ""
         sys.stdout.write(up + "".join(row + "\x1b[K\n" for row in rows))
         sys.stdout.flush()
@@ -441,6 +515,16 @@ def human_result(r, st):
         return [f"{state}" + (f". Next: {step}" if step else "")]
     error = r["error"]
     return [f"✗ {error['message']}", f"  {error['hint']}"] + ([f"  next: {step}"] if step else [])
+
+
+def key_hint(st):
+    """The keys that work now, in words."""
+    state = st.get("state")
+    if state in jobs.ACTIVE:
+        return "space pause · q stop watching (it carries on)"
+    if state == "paused":
+        return "space resume · q quit"
+    return ""
 
 
 def progress_line(st):
@@ -515,6 +599,9 @@ def parser(out):
         c.add_argument("--in", dest="in_", metavar="WAIT", help="start after this long: 30m, 2h, 1h30m")
         c.add_argument("--after", metavar="ID", help="start when this download has ended")
         c.add_argument("--limit", metavar="SPEED", help="at most this fast: 500K, 2M (bytes a second)")
+        c.add_argument("--audio", action="store_true", help="a video's sound alone (YouTube...)")
+        c.add_argument("--video", action="store_true",
+                       help="a video page idm doesn't know as one: let yt-dlp find the video")
         if name == "get":
             c.add_argument("--max", type=float, metavar="SECONDS",
                            help="reply after this long even if not done (agents: 90)")
