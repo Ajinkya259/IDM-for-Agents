@@ -17,6 +17,11 @@ something to run next, the reply has `next`: the exact command.
    - `"state": "done"`: the file is at `file`. Tell the user where.
    - `"state": "downloading"`: a big file. It carries on in the background, so run `next`
      (`idm wait ID`) until it is done. Tell the user how far along it is (`percent`, `eta`).
+     A `stalled` number with a `trouble` means the server has sent nothing for that many
+     seconds; idm keeps trying, and stops with `NETWORK` after 2 minutes of silence.
+   - `"state": "scheduled"`: it starts at `starts_at` (`starts_in` from now). Tell the user
+     when; there is nothing to run until then.
+   - `"state": "queued"`: it is waiting its turn (`waiting_for` says for what). Run `next`.
    - `"ok": false`: look up `error.code` below, and run `next` when there is one.
 3. Don't switch to curl or wget when idm reports an error: the error already says what is
    wrong, and the other tool would only hit the same wall (or save an error page as the file).
@@ -25,7 +30,7 @@ something to run next, the reply has `next`: the exact command.
 
 | `error.code` | What to do |
 |---|---|
-| `RATE_LIMITED`, `SERVER_ERROR`, `NETWORK` | idm already waited and retried. Run `next` (`idm resume ID`) once; if it fails again, tell the user the server is having trouble. |
+| `RATE_LIMITED`, `SERVER_ERROR`, `NETWORK` | idm already waited and retried. Run `next` (`idm resume ID`) once; if it fails again, tell the user the server is having trouble, and offer to try later: the same `idm start` with `--in 30m`. |
 | `FILE_CHANGED` | The file changed on the server while it downloaded. Run `next`: it starts over with the new version. |
 | `INTERRUPTED` | The background download stopped (killed, or the computer slept). Run `next`: it carries on from where it was. |
 | `NOT_FOUND` | The link is wrong or has expired. Tell the user and ask for a fresh link. Don't guess other links. |
@@ -45,11 +50,18 @@ something to run next, the reply has `next`: the exact command.
   add `sleep` loops.
 - A `note` in a reply says something worth telling the user, like "starting over: the file
   changed".
+- Later, or in order: `--at 02:00` (or `2am`, or `'2026-11-25 02:00'`), `--in 2h`, `--after ID`
+  (when that download has ended). `idm resume ID --now` starts a waiting one now.
+- Speed: `--limit 2M` (bytes a second; `500K`...). `idm limit ID 500K` changes it while the
+  download runs; `idm limit ID 0` removes it. Use it when the user wants the network free for
+  something else.
+- At most 3 downloads run at once; the rest wait in line, first come first served.
 - Other commands: `idm start URL` (start in the background, reply at once), `idm status ID`,
   `idm list` (the latest 20), `idm pause ID`, `idm resume ID`, `idm cancel ID` (stops it and
   deletes the partial file; a finished file stays).
 - Options for get/start: `-o NAME`, `-d FOLDER`, `--header 'Name: value'`,
-  `--cookies FILE`, `--connections N` (1-16, default 8), `--again` (download again).
+  `--cookies FILE`, `--connections N` (1-16, default 8), `--again` (download again),
+  `--at`, `--in`, `--after`, `--limit`.
 - Exit codes: 0 fine, 1 failed, 2 bad command, 3 failed but worth retrying (run `next`).
 - The person sees the download as halo, an animated face, in their terminal; you only need
   the JSON.

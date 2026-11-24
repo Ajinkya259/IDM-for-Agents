@@ -20,7 +20,10 @@ type Frame = {
 const KEEP_MS = 1500 // after the command ends, how long the face may take to show how it ended
 const KEEP_FACES = 20 // finished faces kept on screen (the oldest go first)
 const MAYBE_IDM = /\bidm\b[\s\S]*\b(get|wait)\b/ // which Bash calls the hook hears at all
-const TAKES_VALUE = new Set(['-o', '--output', '-d', '--dir', '--header', '--cookies', '--connections', '--max'])
+const TAKES_VALUE = new Set([
+  '-o', '--output', '-d', '--dir', '--header', '--cookies', '--connections', '--max',
+  '--at', '--in', '--after', '--limit',
+])
 
 export const register: Register = on => {
   const frames = new Map<string, Frame>() // the latest frame under each command, by its id

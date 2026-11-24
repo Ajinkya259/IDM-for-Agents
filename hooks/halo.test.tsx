@@ -21,7 +21,7 @@ function engine(on: On) {
 
 function row(id: string) {
   return {
-    plugin: 'idm-for-agent',
+    plugin: 'idm-for-agents',
     component: 'ToolUse',
     requestId: id,
     props: {
@@ -40,6 +40,7 @@ test('it knows which download a command is about', () => {
   expect(watchTarget('cd IDM && bin/idm get "https://x.org/a.zip" -d dl')).toBe('https://x.org/a.zip')
   expect(watchTarget('idm get -d dl --connections 4 https://x.org/a.zip')).toBe('https://x.org/a.zip')
   expect(watchTarget('python3 -m idm wait 0f3e9a --max 30')).toBe('0f3e9a')
+  expect(watchTarget('idm get --at 02:00 --limit 2M https://x.org/a.zip')).toBe('https://x.org/a.zip')
   expect(watchTarget('idm start https://x.org/a.zip')).toBeNull() // replies at once: nothing to show
   expect(watchTarget('curl -O https://x.org/a.zip')).toBeNull()
   // what a critic tried
@@ -94,7 +95,7 @@ test('a folded run of shell commands opens up to show the face', async ($, on) =
   const call = { tool: 'Bash', input: { command: 'ls' }, isRunning: false, isErrored: false, isInterrupted: false }
   for (const id of ['toolu_fold', 'toolu_other']) {
     const group = await $.ui.mount({
-      plugin: 'idm-for-agent',
+      plugin: 'idm-for-agents',
       component: 'ToolGroup',
       requestId: `group_${id}`,
       surface: 'terminal',

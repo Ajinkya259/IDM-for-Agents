@@ -11,6 +11,8 @@ import socket
 import ssl
 import urllib.error
 
+from .when import how_long
+
 HINTS = {
     "BAD_URL": "Check the link: it should start with http:// or https://.",
     "BAD_INPUT": "Check the command's options.",
@@ -43,11 +45,21 @@ HINTS = {
 AUTO_RETRY = {"RATE_LIMITED", "SERVER_ERROR", "NETWORK"}                  # idm retries these itself
 RETRYABLE = AUTO_RETRY | {"FILE_CHANGED", "DISK_FULL", "INTERRUPTED"}      # worth the agent trying again
 TRIES = int(os.environ.get("IDM_TRIES", "8"))         # failures in a row before giving up
+PATIENCE = float(os.environ.get("IDM_PATIENCE", "120"))   # seconds with no byte at all: give up
 
 
-def gave_up(error):
-    """The error to report after TRIES failures in a row."""
-    return IDMError(error.code, f"{error} (gave up after {TRIES} tries)", error.retry_after)
+def gave_up(error, silent_for=None):
+    """The error to report when idm stops retrying: after TRIES failures in a row, or (for a
+    server that has gone silent) after PATIENCE seconds without a single byte."""
+    why = (f"nothing arrived for {how_long(silent_for)}" if silent_for is not None
+           else f"gave up after {TRIES} tries")
+    return IDMError(error.code, f"{error} ({why})", error.retry_after)
+
+
+def out_of_patience(error, silent_for):
+    """A server that sends nothing at all (it doesn't answer, or stopped mid-file) is given
+    PATIENCE seconds, however many tries that is.  A busy one (429, 5xx) is given TRIES."""
+    return error.code == "NETWORK" and silent_for > PATIENCE
 
 
 def backoff(error, fails):

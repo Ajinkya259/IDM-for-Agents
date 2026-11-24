@@ -11,6 +11,7 @@ import http.cookiejar
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -21,11 +22,12 @@ from typing import Optional
 
 from . import __version__
 from .crew import Crew
-from .errors import AUTO_RETRY, TRIES, IDMError, backoff, classify, gave_up
+from .errors import AUTO_RETRY, TRIES, IDMError, backoff, classify, gave_up, out_of_patience
 
 CHUNK = 64 * 1024                                     # read and write 64 KB at a time
-TIMEOUT = 30                                          # silent for 30 s = the connection is dead
-USER_AGENT = f"Mozilla/5.0 (compatible; idm-for-agent/{__version__})"
+CONNECT_TIMEOUT = float(os.environ.get("IDM_CONNECT_TIMEOUT", "10"))  # no answer in 10 s: try again
+READ_TIMEOUT = float(os.environ.get("IDM_READ_TIMEOUT", "20"))        # silent 20 s mid-file: dead
+USER_AGENT = f"Mozilla/5.0 (compatible; idm-for-agents/{__version__})"
 PAGE_TYPES = ("text/html", "application/xhtml+xml")
 PAGE_EXTENSIONS = ("", ".html", ".htm", ".php", ".asp", ".aspx", ".jsp", ".shtml", ".cgi")
 
@@ -46,15 +48,16 @@ class Report:
 def download(job, report):
     """Download job.url into job.folder and return the saved file's path.  Raises IDMError when
     it fails, and KeyboardInterrupt when paused (the .part file stays, to resume from)."""
-    opener = make_opener(job)
+    opener, limit = make_opener(job), Limit(job)
     remote = with_retries(lambda: probe(opener, job), report)            # 1. what is this file?
     part = PartFile(job.folder, job.name or remote.name, job.url)        # 2. where does it go?
     report.found(remote, part)
     report.leftovers(part.keep_or_discard(remote), part.have())          # 3. anything from last time?
     if remote.splittable:                                                # 4. get the missing bytes:
-        fetch_in_pieces(opener, job, remote, part, report)               #    many connections at once,
+        fetch_in_pieces(opener, job, remote, part, report, limit)        #    many connections at once,
     else:                                                                #    or one, start to end
-        with_retries(lambda: fetch_rest(opener, job, remote, part, report), report, progress=part.have)
+        with_retries(lambda: fetch_rest(opener, job, remote, part, report, limit), report,
+                     progress=part.have)
     return part.finish()                                                 # 5. NAME.part -> NAME
 
 
@@ -97,7 +100,7 @@ def links_on_page(opener, job):
     """The links on a web page that look like files (at most 5), to offer in its place."""
     try:
         headers = {"User-Agent": USER_AGENT, **job.headers}
-        with opener.open(urllib.request.Request(job.url, headers=headers), timeout=TIMEOUT) as resp:
+        with opener.open(urllib.request.Request(job.url, headers=headers), timeout=READ_TIMEOUT) as resp:
             html = resp.read(1_000_000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
             base = resp.geturl()
     except (OSError, ValueError, http.client.HTTPException):
@@ -123,14 +126,14 @@ class LinkFinder(HTMLParser):
             self.hrefs.append(href)
 
 
-def fetch_in_pieces(opener, job, remote, part, report):
+def fetch_in_pieces(opener, job, remote, part, report, limit):
     """Several connections at once, each on its own piece of the file (see crew.py)."""
 
     def fetch_piece(piece, save):
         """One try at one piece: ask for its bytes, and save them as they come."""
         with request(opener, job, piece.pos, piece.end - 1) as resp:
             check_piece(resp, piece.pos, remote)
-            for chunk in iter(lambda: resp.read(CHUNK), b""):
+            for chunk in limit.chunks(resp):
                 if not save(piece, chunk):
                     return                                              # complete (or stopping)
         raise IDMError("NETWORK", f"the server stopped sending at {piece.pos:,} bytes")
@@ -138,7 +141,7 @@ def fetch_in_pieces(opener, job, remote, part, report):
     Crew(fetch_piece, part, report, job.connections).run()
 
 
-def fetch_rest(opener, job, remote, part, report):
+def fetch_rest(opener, job, remote, part, report, limit):
     """One connection: one try at downloading whatever is still missing from the .part file."""
     offset = part.have() if remote.can_resume else 0
     if remote.size is not None and offset >= remote.size:
@@ -146,7 +149,7 @@ def fetch_rest(opener, job, remote, part, report):
     with request(opener, job, offset) as resp:
         check_same_file(resp, remote)
         start = offset if resp.status == 206 else 0                     # 200 = the whole file again
-        part.write(resp, start, report.progress)
+        part.write(limit.chunks(resp), start, report.progress)
     if remote.size is not None and part.have() < remote.size:
         raise IDMError("NETWORK", f"the server stopped sending at {part.have():,} bytes")
 
@@ -154,8 +157,8 @@ def fetch_rest(opener, job, remote, part, report):
 def with_retries(attempt, report, progress=lambda: 0):
     """Run attempt() until it works.  A failure that may pass (network, busy server) is retried
     after a wait: 1, 2, 4... s, or as long as the server asks.  After TRIES failures in a row
-    with no progress in between, the last one is raised."""
-    fails = 0
+    with no progress in between, or PATIENCE seconds of a silent server, the last one is raised."""
+    fails, moved = 0, time.time()
     while True:
         before = progress()
         try:
@@ -166,7 +169,11 @@ def with_retries(attempt, report, progress=lambda: 0):
                 raise                                                   # a bug in idm: let it show
             if error.code not in AUTO_RETRY:
                 raise error from None
-            fails = 1 if progress() > before else fails + 1
+            if progress() > before:
+                fails, moved = 0, time.time()
+            fails += 1
+            if out_of_patience(error, time.time() - moved):
+                raise gave_up(error, silent_for=time.time() - moved) from None
             if fails > TRIES:
                 raise gave_up(error) from None
             wait = backoff(error, fails)
@@ -178,7 +185,7 @@ def with_retries(attempt, report, progress=lambda: 0):
 def make_opener(job):
     """urllib's opener, carrying the browser cookies the job was given (if any)."""
     if not job.cookies:
-        return urllib.request.build_opener(KeepLoginsHome)
+        return urllib.request.build_opener(KeepLoginsHome, QuickHTTP, QuickHTTPS)
     jar = http.cookiejar.MozillaCookieJar()
     try:
         jar.load(job.cookies, ignore_discard=True, ignore_expires=True)
@@ -187,7 +194,37 @@ def make_opener(job):
     for cookie in jar:                     # browsers export login cookies with expiry 0, meaning
         if cookie.expires == 0:            # "until the browser closes", not "expired in 1970"
             cookie.expires, cookie.discard = None, True
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), KeepLoginsHome)
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), KeepLoginsHome,
+                                       QuickHTTP, QuickHTTPS)
+
+
+class QuickConnect:
+    """A connection that gives a server CONNECT_TIMEOUT seconds to answer (and agree on TLS),
+    then READ_TIMEOUT seconds between bytes.  (urllib has one timeout for both, so a server
+    that never answers would cost the long one.)"""
+
+    def connect(self):
+        self.timeout = CONNECT_TIMEOUT
+        super().connect()
+        self.sock.settimeout(READ_TIMEOUT)
+
+
+class QuickHTTPConnection(QuickConnect, http.client.HTTPConnection):
+    pass
+
+
+class QuickHTTPSConnection(QuickConnect, http.client.HTTPSConnection):
+    pass
+
+
+class QuickHTTP(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(QuickHTTPConnection, req)
+
+
+class QuickHTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(QuickHTTPSConnection, req, context=self._context)
 
 
 class KeepLoginsHome(urllib.request.HTTPRedirectHandler):
@@ -213,7 +250,47 @@ def request(opener, job, offset, last=None):
     headers = {"User-Agent": USER_AGENT, **job.headers,
                "Range": f"bytes={offset}-{'' if last is None else last}",
                "Accept-Encoding": "identity"}       # no compression: byte 5,000 must be byte 5,000
-    return opener.open(urllib.request.Request(job.url, headers=headers), timeout=TIMEOUT)
+    return opener.open(urllib.request.Request(job.url, headers=headers), timeout=READ_TIMEOUT)
+
+
+class Limit:
+    """A speed limit for one download, shared by all its connections: at most `job.limit`
+    bytes a second (None: no limit).  It reads the limit again every second, so `idm limit`
+    can change it while the download runs."""
+
+    def __init__(self, job):
+        self.job_file, self.rate, self.read_at = job.dir / "job.json", job.limit, time.monotonic()
+        self.lock, self.free_at = threading.Lock(), time.monotonic()   # when the line is free
+
+    def chunks(self, resp):
+        """The answer's bytes, a chunk at a time, no faster than the limit."""
+        while True:
+            chunk = resp.read(self.chunk_size())
+            if not chunk:
+                return
+            self.take(len(chunk))
+            yield chunk
+
+    def chunk_size(self):
+        rate = self.current()
+        return min(CHUNK, max(1024, rate // 8)) if rate else CHUNK    # small steps when slow
+
+    def take(self, n):
+        """Wait until n more bytes fit under the limit."""
+        rate = self.current()
+        if not rate:
+            return
+        with self.lock:
+            now = time.monotonic()
+            turn = max(self.free_at, now)               # after the chunks before it
+            self.free_at = turn + n / rate
+        if turn > now:
+            time.sleep(turn - now)
+
+    def current(self):
+        if time.monotonic() - self.read_at >= 1:
+            self.rate, self.read_at = read_json(self.job_file).get("limit", self.rate), time.monotonic()
+        return self.rate
 
 
 def total_size(resp):
@@ -314,13 +391,13 @@ class PartFile:
         self.missing = missing
         write_json(self.notes, {**self.about, "missing": missing})
 
-    def write(self, resp, start, on_progress):
+    def write(self, chunks, start, on_progress):
         """Save what the server sends, from byte `start` (dropping anything after it)."""
         with open(self.path, "r+b" if start else "wb") as f:
             f.seek(start)
             f.truncate()
             done = start
-            for chunk in iter(lambda: resp.read(CHUNK), b""):
+            for chunk in chunks:
                 f.write(chunk)
                 done += len(chunk)
                 on_progress(done)

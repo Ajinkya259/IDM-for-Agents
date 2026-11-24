@@ -10,6 +10,10 @@ Each job lives in a folder, ~/.idm/jobs/<id>/:
     status.json   how it is going, rewritten by the worker about 5 times a second.  It is
                   also what the animated face will read.
     worker.log    anything the worker printed, for debugging
+
+Before it downloads, a worker waits its turn: for its time (--at, --in), for the download it
+follows (--after), and for one of the MAX_RUNNING places (~/.idm/places/N.lock): at most that
+many downloads run at once, and the rest wait in line, first come first served.
 """
 import fcntl
 import os
@@ -29,7 +33,8 @@ from .engine import read_json, write_json
 from .errors import IDMError, classify
 
 HOME = Path(os.environ.get("IDM_HOME") or "~/.idm").expanduser().absolute()
-ACTIVE = ("queued", "downloading")                     # a worker is on it
+MAX_RUNNING = int(os.environ.get("IDM_MAX_DOWNLOADS", "3"))   # downloads at once; the rest wait
+ACTIVE = ("scheduled", "queued", "downloading")        # a worker is on it (maybe waiting its turn)
 FINAL = ("done", "failed", "paused", "cancelled")       # nothing is happening
 # and "new": created, its worker not started yet
 
@@ -45,6 +50,9 @@ class Job:
     cookies: Optional[str] = None                  # a browser cookies.txt file
     allow_page: bool = False                       # save a web page instead of refusing it
     connections: int = 8                           # at most this many at once
+    starts_at: Optional[float] = None              # --at / --in: not before this time
+    after: Optional[str] = None                    # --after: not before this job has ended
+    limit: Optional[int] = None                    # --limit: at most this many bytes a second
     created: float = field(default_factory=time.time)
 
     @property
@@ -119,8 +127,10 @@ _children = []                                        # workers this process sta
 
 def start(job):
     """Start a worker for the job, in the background.  It outlives this command."""
-    job.set_status(state="queued", pid=None, error=None, trouble=None, note=None, speed=None,
-                   eta=None)
+    later = job.starts_at and job.starts_at > time.time()
+    job.set_status(state="scheduled" if later else "queued", starts_at=job.starts_at if later else None,
+                   limit=job.limit, pid=None, error=None, trouble=None, note=None, speed=None,
+                   eta=None, stalled=None, waiting_for=None, in_line_since=None)
     home = str(Path(__file__).resolve().parent.parent)  # idm's own folder: run this idm, never
     with open(job.dir / "worker.log", "a") as log:      # an idm/ folder in the current one
         worker = subprocess.Popen([sys.executable, "-m", "idm", "_work", job.id], cwd=home,
@@ -181,7 +191,10 @@ def work(job):
         signal.signal(signal.SIGTERM, _pause)
         status = StatusReport(job)
         try:
-            path = engine.download(job, status)
+            job = wait_for_turn(job, status)
+            with a_place(job, status):
+                status.begin()
+                path = engine.download(job, status)
         except KeyboardInterrupt:
             status.end("paused")
         except Exception as e:
@@ -198,15 +211,81 @@ def _pause(signum, frame):
     raise KeyboardInterrupt                           # `idm pause`: stop where we are
 
 
+def wait_for_turn(job, status):
+    """Wait for the job's time (--at, --in) and for the job it follows (--after) to end.
+    Returns the job as it is then: `idm resume --now` may have cleared both meanwhile."""
+    while True:
+        job = load(job.id)
+        if job.starts_at and time.time() < job.starts_at:
+            status.waiting("scheduled", starts_at=job.starts_at)
+        elif job.after and load(job.after).status().get("state") in ACTIVE:
+            status.waiting("queued", waiting_for=f"download {job.after} to end")
+        else:
+            return job
+        time.sleep(1)               # short naps, on the wall clock: it jumps when the Mac sleeps
+
+
+@contextmanager
+def a_place(job, status):
+    """Hold one of the MAX_RUNNING places while the job downloads.  Jobs take them in the
+    order they asked; a place frees itself when its worker ends, however it ends (the lock
+    goes with the process)."""
+    asked = time.time()
+    status.waiting("queued", in_line_since=asked)     # so the jobs behind see this one
+    while True:
+        place = None if ahead_in_line(job, asked) else free_place()
+        if place:
+            break
+        status.waiting("queued", in_line_since=asked,
+                       waiting_for=f"a free place ({MAX_RUNNING} downloads are running)")
+        time.sleep(0.5)
+    with place:
+        yield
+
+
+def ahead_in_line(job, asked):
+    """Is another job waiting for a place since before this one asked?"""
+    for other in every():
+        st = read_json(other.dir / "status.json")
+        if other.id != job.id and st.get("state") == "queued" and alive(st.get("pid")) \
+                and (st.get("in_line_since") or asked) < asked:
+            return True
+    return False
+
+
+def free_place():
+    """A place's lock, taken; None if every place is taken."""
+    (HOME / "places").mkdir(parents=True, exist_ok=True)
+    for n in range(MAX_RUNNING):
+        place = open(HOME / "places" / f"{n}.lock", "w")
+        try:
+            fcntl.flock(place, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return place
+        except BlockingIOError:
+            place.close()
+    return None
+
+
 class StatusReport(engine.Report):
     """Hears what the engine does and keeps status.json up to date: progress at most 5 times
-    a second (speed is measured over the last 3 seconds), everything else at once."""
+    a second (speed is measured over the last 3 seconds), everything else at once.  When no
+    byte arrives, it says so: the speed falls to 0 and `stalled` counts the seconds."""
 
     def __init__(self, job):
         self.job, self.size, self.window, self.written = job, None, [], 0.0
-        self.done = None                              # bytes on disk, the latest count
-        job.set_status(state="downloading", pid=os.getpid(), started=time.time(),
-                       error=None, trouble=None, note=None)
+        self.done, self.moved, self.waited = None, time.time(), None
+        job.set_status(pid=os.getpid(), error=None, trouble=None, note=None)
+
+    def waiting(self, state, **why):
+        """Not downloading yet: scheduled, or queued (`why` says for what)."""
+        if (state, why) != self.waited:
+            self.waited = (state, why)
+            self.job.set_status(state=state, **{"starts_at": None, "waiting_for": None, **why})
+
+    def begin(self):
+        self.moved = time.time()
+        self.job.set_status(state="downloading", started=self.moved, starts_at=None,
+                            waiting_for=None, in_line_since=None)
 
     def found(self, remote, part):
         self.size = remote.size
@@ -220,23 +299,34 @@ class StatusReport(engine.Report):
         self.job.set_status(bytes=have, note=note)
 
     def progress(self, done, connections=1):
-        self.done, now = done, time.time()
+        now = time.time()
+        if done != self.done:
+            self.done, self.moved = done, now
         if now - self.written < 0.2:
             return
         self.written = now
         self.window = [(t, b) for t, b in self.window if now - t <= 3 and b <= done] + [(now, done)]
         speed = self.speed()
         eta = round((self.size - done) / speed) if speed and self.size else None
+        moving = {"trouble": None} if now - self.moved < 1 else {}   # (trouble stays till bytes come)
         self.job.set_status(state="downloading", bytes=done, speed=round(speed), eta=eta,
-                            connections=connections, trouble=None)
+                            connections=connections, stalled=self.stalled(), **moving)
 
     def retrying(self, error, wait):
-        self.job.set_status(trouble={"code": error.code, "message": str(error), "retry_in": wait})
+        quiet = {"speed": 0, "eta": None} if time.time() - self.moved >= 3 else {}
+        self.job.set_status(trouble={"code": error.code, "message": str(error), "retry_in": wait},
+                            stalled=self.stalled(), **quiet)
+
+    def stalled(self):
+        """Seconds since the last byte arrived, once there have been a few; else None."""
+        silent = time.time() - self.moved
+        return round(silent) if silent >= 5 else None
 
     def speed(self):
         (t0, b0), (t1, b1) = self.window[0], self.window[-1]
         return (b1 - b0) / (t1 - t0) if t1 > t0 else 0.0
 
     def end(self, state, **fields):
-        self.job.set_status(state=state, speed=0, eta=None, trouble=None, connections=0,
-                            finished=time.time(), **{"bytes": self.done, **fields})
+        self.job.set_status(state=state, speed=0, eta=None, trouble=None, connections=0, stalled=None,
+                            waiting_for=None, in_line_since=None, finished=time.time(),
+                            **{"bytes": self.done, **fields})

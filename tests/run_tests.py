@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Tests for idm: every command, every error code, the background jobs, downloading in pieces
-over many connections, halo (in a terminal, and as cells for Claude Code), and what a critic
-found broken.
+over many connections, halo (in a terminal, and as cells for Claude Code), what a critic
+found broken, and phase 6: scheduling, the waiting line, speed limits and silent servers.
 
     python3 tests/run_tests.py          (about 90 seconds; uses free local ports)
     python3 tests/run_tests.py pause    (only the tests with "pause" in their name)
@@ -11,6 +11,7 @@ Each test runs the real `bin/idm` against tests/testserver.py, with its own IDM_
 download folder, and checks the JSON replies, the exit codes and the saved bytes.
 """
 import base64
+import datetime
 import fcntl
 import hashlib
 import json
@@ -35,7 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 IDM = [sys.executable, str(HERE.parent / "bin" / "idm")]
 sys.path.insert(0, str(HERE.parent))
-from idm import halo  # noqa: E402  (needs the path above)
+from idm import halo, when  # noqa: E402  (needs the path above)
 from idm.crew import MIN_PIECE, Missing  # noqa: E402
 TESTS, RESULTS = [], []
 LEFTOVERS = []                     # servers and sandboxes to clean up after each test, pass or fail
@@ -47,6 +48,7 @@ def test(fn):
 
 
 def check(what, ok, detail=""):
+    ok = bool(ok)
     RESULTS.append(ok)
     print(("  PASS  " if ok else "  FAIL  ") + what + ("" if ok else f"\n        {detail}"))
 
@@ -846,11 +848,208 @@ def watch_follows_every_download():
         box.get(srv.url(), "-o", "second.bin")
     agent = threading.Thread(target=two_downloads)
     agent.start()
-    code, shown = in_terminal(["watch"], box.env, interrupt_after=6)
+    code, shown = in_terminal(["watch"], box.env, interrupt_after=9)   # (each takes about 2.5 s)
     agent.join()
     check("watch (no id): waits, shows each download as it comes, until Ctrl+C",
           code == 0 and "watching for downloads" in shown and shown.count("✓ saved") == 2
           and "first.bin" in shown and "second.bin" in shown, shown[-400:])
+
+
+# ---- phase 6: when, in what order, how fast ---------------------------------------------------
+@test
+def scheduled_job_starts_at_its_time():
+    srv, box = Server(), Sandbox()
+    t0 = time.time()
+    code, r = box.start(srv.url(), "--in", "3s")
+    job = r.get("job", "?")
+    check("--in 3s: scheduled, says when it starts, and no `next` (nothing to do till then)",
+          code == 0 and r.get("state") == "scheduled" and r.get("starts_at") and r.get("starts_in")
+          and "next" not in r, r)
+    code, w = box.idm("wait", job, "--max", "20")
+    check("wait on a scheduled job replies at once, still scheduled",
+          w.get("state") == "scheduled" and time.time() - t0 < 2.5, w)
+    done = wait_until(lambda: box.status_file(job).get("state") == "done", timeout=20)
+    started = box.status_file(job).get("started", 0) - t0
+    check("it starts at its time, not before, and saves the right file",
+          done and 2.8 <= started <= 6 and sha(box.dl / "halo test.bin") == srv.sha(),
+          f"started after {started:.1f}s")
+
+
+@test
+def get_at_a_clock_time_replies_at_once_and_resume_now_starts_it():
+    srv, box = Server(), Sandbox()
+    later = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%H:%M")
+    t0 = time.time()
+    code, r = box.get(srv.url(), "--at", later)
+    job = r.get("job", "?")
+    check("get --at: replies at once (it doesn't wait an hour), scheduled for that time",
+          code == 0 and r.get("state") == "scheduled" and time.time() - t0 < 5
+          and (r.get("starts_at") or "")[11:16] == later, r)
+    code, now = box.idm("resume", job, "--now")
+    check("resume --now: it starts now", now.get("state") in ("queued", "downloading"), now)
+    code, w = box.idm("wait", job)
+    check("...and downloads", w.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), w)
+
+
+@test
+def pause_keeps_the_schedule():
+    srv, box = Server(), Sandbox()
+    code, r = box.start(srv.url(), "--in", "1h")
+    job = r.get("job", "?")
+    code, p = box.idm("pause", job)
+    check("a scheduled download can be paused", p.get("state") == "paused", p)
+    code, q = box.idm("resume", job)
+    check("resume (without --now) keeps its time",
+          q.get("state") == "scheduled" and q.get("starts_at") == r.get("starts_at"), (r, q))
+
+
+@test
+def bad_times_and_speeds():
+    srv, box = Server(), Sandbox()
+    for args, what in ((["--in", "soon"], "--in soon"), (["--at", "25:00"], "--at 25:00"),
+                       (["--at", "02:00", "--in", "1h"], "--at and --in together"),
+                       (["--at", "2020-01-01 10:00"], "a time that has passed"),
+                       (["--limit", "fast"], "--limit fast"), (["--limit", "10"], "--limit under 1K")):
+        code, r = box.start(srv.url(), *args)
+        check(f"{what}: BAD_INPUT, exit 2", code == 2 and r.get("error", {}).get("code") == "BAD_INPUT", r)
+    code, r = box.start(srv.url(), "--after", "abc123")
+    check("--after a download that doesn't exist: NO_SUCH_JOB",
+          r.get("error", {}).get("code") == "NO_SUCH_JOB", r)
+    check("none of them left a job behind", box.idm("list")[1].get("jobs") == [])
+    check("times and speeds read as people write them",
+          when.seconds_in("1h30m") == 5400 and when.rate("1.5M") == 1_500_000
+          and when.rate("off") is None and when.how_long(5400) == "1h 30m"
+          and 0 < when.clock_time("02:00") - time.time() <= 86400)
+
+
+@test
+def after_waits_for_the_other_download():
+    srv, box = Server(size=2, rate=1), Sandbox()
+    code, a = box.start(srv.url(), "--connections", "1")
+    code, b = box.start(srv.url("/test.bin?copy=2"), "--after", a.get("job", "?"))
+    ja, jb = a.get("job", "?"), b.get("job", "?")
+    waiting = wait_until(lambda: f"download {ja}" in (box.status_file(jb).get("waiting_for") or ""), 5)
+    check("--after: queued, waiting for that download to end", waiting, box.status_file(jb))
+    code, w = box.idm("wait", jb, "--max", "30")
+    sa, sb = box.status_file(ja), box.status_file(jb)
+    check("it started only once the first had ended; both files are right",
+          w.get("state") == "done" and sb.get("started", 0) >= sa.get("finished", 1e12)
+          and all(sha(box.dl / f) == srv.sha() for f in box.files()) and len(box.files()) == 2,
+          (sa.get("finished"), sb.get("started"), box.files()))
+
+
+@test
+def at_most_n_downloads_at_once():
+    srv, box = Server(size=1.5, rate=1), Sandbox(IDM_MAX_DOWNLOADS="2")
+    ids = [box.start(srv.url(f"/test.bin?n={n}"), "--connections", "1")[1].get("job", "?")
+           for n in range(3)]
+    peak, waited, deadline = 0, False, time.time() + 30
+    while time.time() < deadline:
+        states = [box.status_file(j) for j in ids]
+        peak = max(peak, sum(st.get("state") == "downloading" for st in states))
+        waited = waited or any("a free place" in (st.get("waiting_for") or "") for st in states)
+        if all(st.get("state") == "done" for st in states):
+            break
+        time.sleep(0.05)
+    check("IDM_MAX_DOWNLOADS=2: never more than 2 at once, and the third waited for a place",
+          peak == 2 and waited, f"peak {peak}, waited {waited}")
+    check("all three finished", all(box.status_file(j).get("state") == "done" for j in ids))
+
+
+@test
+def first_come_first_served():
+    srv, box = Server(size=1, rate=1), Sandbox(IDM_MAX_DOWNLOADS="1")
+    ids = []
+    for n in range(3):
+        ids.append(box.start(srv.url(f"/test.bin?n={n}"), "--connections", "1")[1].get("job", "?"))
+        time.sleep(0.4)
+    wait_until(lambda: all(box.status_file(j).get("state") == "done" for j in ids), 30)
+    sts = [box.status_file(j) for j in ids]
+    starts = [st.get("started", 0) for st in sts]
+    one_at_a_time = all(sts[i + 1].get("started", 0) >= sts[i].get("finished", 1e12) for i in range(2))
+    check("one place: one at a time, in the order they were started",
+          all(starts) and starts == sorted(starts) and one_at_a_time, starts)
+
+
+@test
+def speed_limit():
+    srv, box = Server(size=2, rate=20), Sandbox()
+    t0 = time.time()
+    code, r = box.get(srv.url(), "--limit", "500K")
+    took = time.time() - t0
+    check("--limit 500K: 2 MB takes about 4 s (not a fraction of one), and the bytes are right",
+          r.get("state") == "done" and 3.3 <= took <= 9 and sha(box.dl / "halo test.bin") == srv.sha(),
+          f"{took:.1f}s {r}")
+
+
+@test
+def limit_changes_while_it_runs():
+    srv, box = Server(size=3, rate=20), Sandbox()
+    code, r = box.start(srv.url(), "--limit", "200K")
+    job = r.get("job", "?")
+    check("start --limit: the reply says the limit", r.get("limit") == 200_000, r)
+    time.sleep(2.5)
+    st = box.status_file(job)
+    check("it keeps to the limit (about 200 KB/s)", 100_000 <= (st.get("speed") or 0) <= 300_000, st)
+    code, bad = box.idm("limit", job, "fast")
+    check("idm limit ID fast: BAD_INPUT, exit 2", code == 2, bad)
+    code, off = box.idm("limit", job, "0")
+    check("idm limit ID 0: no limit any more", code == 0 and "limit" not in off, off)
+    code, w = box.idm("wait", job, "--max", "15")
+    check("...and it finishes fast", w.get("state") == "done" and w.get("seconds", 99) < 7, w)
+
+
+# ---- phase 6: servers that go silent --------------------------------------------------------------
+@test
+def a_silent_server_is_shown_as_stalled_then_given_up_on():
+    srv = Server("--stall", "0.5", "--silent", "3600", size=2, rate=1)
+    box = Sandbox(IDM_READ_TIMEOUT="1", IDM_PATIENCE="8")
+    code, r = box.start(srv.url(), "--connections", "2")
+    job = r.get("job", "?")
+    stalled = wait_until(lambda: (box.status_file(job).get("stalled") or 0) >= 5, 15)
+    st = box.status_file(job)
+    check("while nothing arrives: speed 0, no time left, `stalled` counts the seconds",
+          stalled and st.get("speed") == 0 and st.get("eta") is None and st.get("trouble"), st)
+    code, s = box.idm("status", job)
+    check("...and the agent's reply says so", (s.get("stalled") or 0) >= 5 and s.get("speed") == 0, s)
+    code, w = box.idm("wait", job, "--max", "30")
+    e = w.get("error", {})
+    check("after IDM_PATIENCE of silence: NETWORK, 'nothing arrived for', exit 3, next resumes",
+          code == 3 and e.get("code") == "NETWORK" and "nothing arrived for" in e.get("message", "")
+          and w.get("next") == f"idm resume {job}", w)
+
+
+@test
+def a_server_silent_for_a_while_is_waited_out():
+    srv = Server("--stall", "0.5", "--silent", "3", size=2, rate=1)
+    box = Sandbox(IDM_READ_TIMEOUT="1", IDM_PATIENCE="20")
+    code, r = box.get(srv.url(), "--max", "40")
+    check("a server that goes quiet for 3 s, then comes back: the download carries on by itself",
+          r.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), r)
+
+
+@test
+def a_server_that_never_answers_is_given_up_on_in_seconds():
+    box = Sandbox(IDM_CONNECT_TIMEOUT="1", IDM_PATIENCE="3")
+    t0 = time.time()
+    code, r = box.get("http://192.0.2.1/file.bin", "--max", "60")     # (an address nobody has)
+    took = time.time() - t0
+    check("a server that never answers: NETWORK in seconds, not minutes",
+          code == 3 and r.get("error", {}).get("code") == "NETWORK" and took < 15, f"{took:.1f}s {r}")
+
+
+@test
+def halo_says_when_and_what_it_waits_for():
+    def lines(**st):
+        return [text for text, _ in halo.caption({"url": "http://x/a.zip", **st})]
+    later = lines(state="scheduled", starts_at=time.time() + 5400)
+    check("scheduled: when it starts, and how long till then",
+          later[1].startswith("starts at") and later[2] in ("in 1h 29m", "in 1h 30m"), later)
+    queued = lines(state="queued", waiting_for="download ab12cd to end")
+    check("queued: what it waits for", queued[1:] == ["waiting for", "download ab12cd to end"], queued)
+    stuck = lines(state="downloading", bytes=5, size=10, speed=0, stalled=12,
+                  trouble={"code": "NETWORK", "message": "timed out", "retry_in": 2})
+    check("stalled: how long nothing has come", stuck[2] == "nothing for 12s · timed out · retrying in 2s", stuck)
 
 
 def main():

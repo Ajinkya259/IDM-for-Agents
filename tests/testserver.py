@@ -8,6 +8,9 @@ A small local server that misbehaves on purpose, for testing idm.
     /test.bin       a made-up file (20 MB, sent at 4 MB/s per connection, so there is time
                     to pause it)
                       --drop MB     cuts the connection after that many MB (once)
+                      --stall MB --silent SECONDS
+                                    after that many MB (across all connections), the whole
+                                    server goes silent for that long: no byte, no answer
                       --busy N      answers the first N requests with 429 "too busy"
                       --no-ranges   ignores Range, like a server that can't resume
                       --version N   a different file at the same link (as if it changed)
@@ -47,6 +50,7 @@ class Handler(BaseHTTPRequestHandler):
     def route(self):
         route = self.path.split("?")[0]
         if route == "/test.bin":
+            self.keep_quiet()
             self.server.requests += 1
             if self.server.requests <= self.server.opts.busy:
                 return self.reply(429, b"", {"Retry-After": "1"})
@@ -115,12 +119,26 @@ class Handler(BaseHTTPRequestHandler):
             n = min(CHUNK, end + 1 - pos)
             self.wfile.write(data[pos:pos + n])
             pos, sent = pos + n, sent + n
+            self.count_toward_silence(n)
+            self.keep_quiet()
             if opts.drop and not self.server.dropped and sent >= opts.drop * 1e6:
                 self.server.dropped = True                  # cut the line, once
                 self.close_connection = True
                 self.connection.close()
                 return
             time.sleep(n / (opts.rate * 1e6))
+
+    def count_toward_silence(self, n):
+        srv = self.server
+        with srv.lock:
+            srv.sent += n
+            if srv.opts.stall is not None and not srv.silent_until and srv.sent >= srv.opts.stall * 1e6:
+                srv.silent_until = time.time() + srv.opts.silent          # once
+
+    def keep_quiet(self):
+        """While the server is silent, every connection just waits."""
+        while time.time() < self.server.silent_until:
+            time.sleep(0.05)
 
     def log_message(self, fmt, *args):
         print(f"  {self.headers.get('Range', '-'):>16}  {fmt % args}", flush=True)
@@ -136,10 +154,13 @@ def main():
     ap.add_argument("--no-ranges", action="store_true", help="ignore Range requests")
     ap.add_argument("--version", type=int, default=1, help="change the file's content and ETag")
     ap.add_argument("--max-connections", type=int, default=0, help="refuse more at once (503)")
+    ap.add_argument("--stall", type=float, help="go silent after this many MB, all connections")
+    ap.add_argument("--silent", type=float, default=3600, help="...for this many seconds")
     opts = ap.parse_args()
     srv = ThreadingHTTPServer(("127.0.0.1", opts.port), Handler)
     srv.daemon_threads = True
     srv.opts, srv.requests, srv.dropped = opts, 0, False
+    srv.sent, srv.silent_until = 0, 0
     srv.lock, srv.active, srv.peak = threading.Lock(), 0, 0
     srv.data = file_bytes(int(opts.size * 1e6), opts.version)
     print(f"serving http://127.0.0.1:{opts.port}/test.bin  ({opts.size:g} MB at {opts.rate:g} MB/s, "

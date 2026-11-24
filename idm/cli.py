@@ -1,13 +1,15 @@
 """
-IDM for Agent: a download manager made for AI agents (and people).
+IDM for Agents: a download manager made for AI agents (and people).
 
     idm get URL            download it, and wait until it is done
     idm start URL          start downloading in the background, and reply at once
+                             (both take --at TIME / --in WAIT, --after ID and --limit SPEED)
     idm wait ID            wait for a download to finish
     idm status ID          how a download is going, right now
     idm watch [ID]         show it as halo, the face (no ID: every download, as it happens)
     idm list               every download
-    idm pause ID | resume ID | cancel ID
+    idm limit ID SPEED     change a download's speed limit (0: none), even while it runs
+    idm pause ID | resume ID [--now] | cancel ID
 
 People see halo, the face, while get, wait and watch run (in a terminal big enough for it).
 
@@ -26,7 +28,7 @@ import sys
 import time
 import urllib.parse
 
-from . import __version__, halo, jobs
+from . import __version__, halo, jobs, when
 from .errors import RETRYABLE, IDMError, from_disk
 
 AGENT_WAIT = 90     # seconds an agent's get/wait may take (tool calls are cut off at ~120 s)
@@ -93,8 +95,23 @@ def cmd_pause(args, out):
 def cmd_resume(args, out):
     job = jobs.load(args.id)
     with jobs.locked(jobs.HOME / "jobs.lock"):         # two resumes at once start one worker
+        if args.now and (job.starts_at or job.after):
+            job.starts_at = job.after = None           # a waiting worker sees it within a second
+            job.save()
+            if job.status().get("state") == "scheduled":
+                job.set_status(state="queued", starts_at=None)
         if job.status().get("state") not in (*jobs.ACTIVE, "done"):
             jobs.start(job)
+    return out.result(job, job.status())
+
+
+def cmd_limit(args, out):
+    job, limit = jobs.load(args.id), checked(when.rate, args.speed)
+    with jobs.locked(jobs.HOME / "jobs.lock"):
+        job = jobs.load(args.id)
+        job.limit = limit                              # a running worker reads it every second
+        job.save()
+        job.set_status(limit=limit)
     return out.result(job, job.status())
 
 
@@ -122,7 +139,8 @@ def find_or_start(args):
         if st.get("state") == "done" and os.path.exists(st.get("file", "")):
             return job, True
         if st.get("state") not in jobs.ACTIVE:
-            job.headers, job.cookies, job.allow_page, job.connections = choices   # latest wins
+            for name, value in choices.items():          # the latest command's options win
+                setattr(job, name, value)
             job.save()
             jobs.start(job)
     return job, False
@@ -144,7 +162,7 @@ def link(url):
 
 
 def options(args):
-    """--header, --cookies, --allow-page and --connections, checked."""
+    """The options of get/start, checked: what the job's fields become."""
     headers = {}
     for h in args.header:
         name, sep, value = h.partition(":")
@@ -157,18 +175,32 @@ def options(args):
     if not 1 <= args.connections <= MAX_CONNECTIONS:
         raise IDMError("BAD_INPUT", f"--connections must be 1 to {MAX_CONNECTIONS}, "
                                     f"not {args.connections}")
-    return headers, cookies, args.allow_page, args.connections
+    after = jobs.load(args.after).id if args.after else None   # (NO_SUCH_JOB if there's none)
+    return {"headers": headers, "cookies": cookies, "allow_page": args.allow_page,
+            "connections": args.connections, "after": after,
+            "starts_at": checked(when.start_time, args.at, args.in_),
+            "limit": checked(when.rate, args.limit) if args.limit else None}
+
+
+def checked(read, *values):
+    """An option read by `when`, its complaint made a BAD_INPUT error."""
+    try:
+        return read(*values)
+    except ValueError as e:
+        raise IDMError("BAD_INPUT", str(e)) from None
 
 
 def follow(job, limit, out, pause_on_ctrl_c=False):
     """Watch a job until it ends (done, failed, paused, cancelled) or `limit` seconds pass,
-    showing people a progress line.  Ctrl+C pauses the download (get) or stops watching (wait)."""
+    showing people a progress line.  A scheduled job is not waited for: that could be hours.
+    Ctrl+C pauses the download (get) or stops watching (wait)."""
     deadline = None if limit is None else time.time() + limit
     try:
         while True:
             st = job.status()
             out.progress(st)
-            if st.get("state") in jobs.FINAL or (deadline is not None and time.time() >= deadline):
+            over = deadline is not None and time.time() >= deadline
+            if st.get("state") in (*jobs.FINAL, "scheduled") or over:
                 return st
             time.sleep(0.1)
     except KeyboardInterrupt:
@@ -203,7 +235,7 @@ def watch_all(out):
     print("  watching for downloads (Ctrl+C to stop)")
     try:
         while True:
-            going = [j for j in jobs.every() if j.status().get("state") in jobs.ACTIVE]
+            going = [j for j in jobs.every() if j.status().get("state") in ("queued", "downloading")]
             if not going:
                 time.sleep(0.2)
                 continue
@@ -267,15 +299,20 @@ def facts(st):
     if st.get("state") == "done":
         return {"file": st.get("file"), "bytes": st.get("bytes"),
                 "seconds": round(st.get("finished", 0) - st.get("started", 0), 1)}
-    active = st.get("state") in jobs.ACTIVE
+    active, starts = st.get("state") in jobs.ACTIVE, st.get("starts_at")
     known = {"file": st.get("file"), "bytes": st.get("bytes"), "size": st.get("size"),
              "percent": percent(st), "speed": st.get("speed") if active else None,
-             "eta": st.get("eta") if active else None, "note": st.get("note")}
+             "eta": st.get("eta") if active else None, "stalled": st.get("stalled") if active else None,
+             "starts_at": when.iso(starts) if starts else None,
+             "starts_in": when.how_long(starts - time.time()) if starts else None,
+             "waiting_for": st.get("waiting_for"), "limit": st.get("limit"), "note": st.get("note")}
     return {k: v for k, v in known.items() if v is not None}
 
 
 def next_step(job, st):
     state, code = st.get("state"), (st.get("error") or {}).get("code")
+    if state == "scheduled":
+        return None                                    # nothing to do till then: tell the person
     if state in jobs.ACTIVE:
         return f"idm wait {job.id}"
     if state in ("paused", "new") or (state == "failed" and code in RETRYABLE):
@@ -325,7 +362,7 @@ class Output:
         if self.face_rows:
             self.last_face(st)
         reply = summary(job, st, already)
-        self.emit(reply, lambda: human_result(reply))
+        self.emit(reply, lambda: human_result(reply, st))
         return exit_code(reply)
 
     def error(self, e):
@@ -383,12 +420,17 @@ class Output:
             print("  " + line)
 
 
-def human_result(r):
+def human_result(r, st):
     state, step = r["state"], r.get("next")
     if state == "done":
         took = "" if r.get("already") else f" in {r['seconds']}s"
         verb = "already downloaded" if r.get("already") else "saved"
         return [f"✓ {verb} {r['file']}  ({mb(r['bytes'])}{took})"]
+    if state == "scheduled":
+        return [f"scheduled: starts at {when.clock(st['starts_at'])} (in {r['starts_in']}). "
+                f"Check on it: idm status {r['job']}"]
+    if state == "queued" and r.get("waiting_for"):
+        return [f"waiting for {r['waiting_for']}. Check on it: {step}"]
     if state in jobs.ACTIVE:
         return [f"downloading in the background ({r.get('percent', 0)}%). Check on it: {step}"]
     if state == "paused":
@@ -402,9 +444,15 @@ def human_result(r):
 
 
 def progress_line(st):
+    if st.get("state") == "scheduled" and st.get("starts_at"):
+        starts = st["starts_at"]
+        return f"scheduled: starts at {when.clock(starts)} (in {when.how_long(starts - time.time())})"
+    if st.get("state") == "queued" and st.get("waiting_for"):
+        return f"waiting for {st['waiting_for']}"
     if st.get("trouble"):
-        t = st["trouble"]
-        return f"{t['message']}; trying again in {t['retry_in']}s"
+        t, silent = st["trouble"], st.get("stalled")
+        quiet = f"nothing for {when.how_long(silent)} · " if silent else ""
+        return f"{quiet}{t['message']}; trying again in {t['retry_in']}s"
     done, size, speed = st.get("bytes") or 0, st.get("size"), st.get("speed") or 0
     if not size:
         return f"{mb(done)}  ·  {mb(speed)}/s" if done else "starting…"
@@ -463,6 +511,10 @@ def parser(out):
         c.add_argument("--again", action="store_true", help="download again even if already done")
         c.add_argument("--connections", type=int, default=8, metavar="N",
                        help=f"download in up to N pieces at once (1-{MAX_CONNECTIONS}, default 8)")
+        c.add_argument("--at", metavar="TIME", help="start at this time: 02:00, 2am, '2026-11-25 02:00'")
+        c.add_argument("--in", dest="in_", metavar="WAIT", help="start after this long: 30m, 2h, 1h30m")
+        c.add_argument("--after", metavar="ID", help="start when this download has ended")
+        c.add_argument("--limit", metavar="SPEED", help="at most this fast: 500K, 2M (bytes a second)")
         if name == "get":
             c.add_argument("--max", type=float, metavar="SECONDS",
                            help="reply after this long even if not done (agents: 90)")
@@ -474,7 +526,14 @@ def parser(out):
                             ("pause", cmd_pause, "pause a download (keeps what it has)"),
                             ("resume", cmd_resume, "carry on with a paused or failed download"),
                             ("cancel", cmd_cancel, "stop a download and delete what it had")):
-        command(name, run, what).add_argument("id")
+        c = command(name, run, what)
+        c.add_argument("id")
+        if name == "resume":
+            c.add_argument("--now", action="store_true",
+                           help="start now, without waiting for its time or the download it follows")
+    c = command("limit", cmd_limit, "change a download's speed limit, even while it runs")
+    c.add_argument("id")
+    c.add_argument("speed", help="500K, 2M... or 0 for no limit")
     c = command("watch", cmd_watch, "show a download as halo, the face (no ID: every download)")
     c.add_argument("job", nargs="?", metavar="ID|LINK")
     c.add_argument("--max", type=float, metavar="SECONDS", help="stop watching after this long")

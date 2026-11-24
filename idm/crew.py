@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .errors import AUTO_RETRY, TRIES, IDMError, backoff, classify, gave_up
+from .errors import AUTO_RETRY, TRIES, IDMError, backoff, classify, gave_up, out_of_patience
 
 MIN_PIECE = 1024 * 1024        # a piece is split only if both halves get at least 1 MB
 SAVE_EVERY = 1.0               # seconds between updates of the notes
@@ -106,6 +106,7 @@ class Crew:
         self.missing = Missing(part.missing)
         self.stop = threading.Event()               # set on pause, or when one fails for all
         self.failure, self.fd = None, None
+        self.moved = time.time()                    # when a byte last arrived, on any connection
 
     def run(self):
         """Download every missing piece, and keep the notes and the progress up to date.
@@ -132,14 +133,12 @@ class Crew:
             raise IDMError("NETWORK", f"stopped with {self.missing.left():,} bytes still missing")
 
     def watch(self, threads):
-        """Until every connection is done: report progress and save the notes now and then."""
-        shown, saved = None, time.time()
+        """Until every connection is done: report progress (even when nothing moves: then the
+        speed falls to 0) and save the notes now and then."""
+        saved = time.time()
         while any(t.is_alive() for t in threads):
             time.sleep(0.2)
-            now = (self.part.size - self.missing.left(), self.missing.working())
-            if now != shown:
-                self.report.progress(*now)          # (bytes done, connections working)
-                shown = now
+            self.report.progress(self.part.size - self.missing.left(), self.missing.working())
             if time.time() - saved >= SAVE_EVERY:
                 self.part.save_missing(self.missing.spans())
                 saved = time.time()
@@ -165,6 +164,7 @@ class Crew:
         written = 0
         while written < len(chunk):                 # (a write may take only part of it)
             written += os.pwrite(self.fd, chunk[written:], piece.pos + written)
+        self.moved = time.time()
         return self.missing.wrote(piece, written)
 
     def try_again(self, piece, e, fails):
@@ -176,16 +176,18 @@ class Crew:
         work: the server may have room by then (another connection, or idm's own first
         request, may have been holding the place).  It rests longer each time, and after
         TRIES refusals in a row it stops for good.  The last connection never steps back: it
-        waits and tries its piece again, and fails the download if it gives up."""
+        waits and tries its piece again, and fails the download if it gives up.  A server
+        that has sent nothing at all, on any connection, for PATIENCE seconds is given up on."""
         error = classify(e)
         if error is None or error.code not in AUTO_RETRY:
             return self.fail(error or e)                    # (None: a bug, shown as it is)
-        giving_up = fails > TRIES
+        silent_for = time.time() - self.moved
+        giving_up = fails > TRIES or out_of_patience(error, silent_for)
         if (error.code != "NETWORK" or giving_up) and self.missing.step_back(piece):
             rest = max(backoff(error, fails), min(30, 2 ** (fails - 1)))
             return None if giving_up or self.stop.wait(rest) else self.missing.take()
         if giving_up:
-            return self.fail(gave_up(error))
+            return self.fail(gave_up(error, silent_for if fails <= TRIES else None))
         wait = backoff(error, fails)
         self.report.retrying(error, wait)
         self.stop.wait(wait)

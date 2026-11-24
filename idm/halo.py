@@ -16,6 +16,9 @@ import os
 import random
 import shutil
 import struct
+import time
+
+from . import when
 
 # The colours (the "lavender" set picked from the mockups).
 FACE, RING, INK, BLUSH = "#B49CFF", "#7456DD", "#2B1D4E", "#FF8FB8"
@@ -124,14 +127,20 @@ def caption(st):
                  f"carry on: idm resume {st.get('job')}"]
     elif state == "cancelled":
         lines = ["cancelled", ""]
+    elif state == "scheduled" and st.get("starts_at"):
+        starts = st["starts_at"]
+        lines = [f"starts at {when.clock(starts)}", f"in {when.how_long(starts - time.time())}"]
+    elif state == "queued" and st.get("waiting_for"):
+        lines = ["waiting for", st["waiting_for"]]
     elif state != "downloading" or not done:
         lines = ["starting…", ""]
     else:
         amount = f"{mb(done)[:-3]} of {mb(size)}" if size else mb(done)
         many = f" · {st['connections']} connections" if (st.get("connections") or 1) > 1 else ""
         left = f"{st['eta']}s left" if st.get("eta") is not None else ""
+        quiet = f"nothing for {when.how_long(st['stalled'])} · " if st.get("stalled") else ""
         lines = [f"{amount} · {mb(st.get('speed'))}/s{many}",
-                 f"{trouble['message']} · retrying in {trouble['retry_in']}s" if trouble else left]
+                 f"{quiet}{trouble['message']} · retrying in {trouble['retry_in']}s" if trouble else left]
     return [(name, RING)] + [(line, None) for line in lines]
 
 

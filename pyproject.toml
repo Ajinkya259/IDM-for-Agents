@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idm-for-agents"
+dynamic = ["version"]
+description = "A download manager made for AI agents: one JSON line per command, error codes with the next step, many connections, resume, scheduling, and halo, a face that shows the download live."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []                        # the Python standard library only
+
+[project.scripts]
+idm = "idm.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Ajinkya259/IDM-for-Agents"
+
+[tool.setuptools]
+packages = ["idm"]
+
+[tool.setuptools.dynamic]
+version = { attr = "idm.__version__" }

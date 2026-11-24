@@ -1,25 +1,18 @@
-# Phase 5: the plugin, and the eval
+# IDM for Agents: the guide
 
-Phase 4's `idm` and halo, packaged as a **Claude Code plugin**, plus an **eval** that measures how well an agent gets a file from a server that misbehaves, with idm and without it.
+Everything about idm in more detail than the [README](../README.md): the plugin's parts, the eval, halo, how a download works, scheduling and the queue, servers that go silent, the agent contract, every error code, how the code is laid out, and the tests.
 
-## Install it in Claude Code
+## The plugin's parts
 
-From a terminal (not inside Claude Code):
-
-```
-claude plugin marketplace add ~/Desktop/untitled/IDM
-claude plugin install idm-for-agent@idm-for-agent
-```
-
-Then start Claude Code as usual and paste a link: "download this: https://…". Once the repository is public, this line will install it for anyone: `/plugin install idm-for-agent --marketplace Ajinkya259/<repo>`.
-
-The plugin is this folder. It gives Claude three things:
+The repo is the Claude Code plugin (and `.claude-plugin/marketplace.json` makes it a marketplace of one). The plugin gives Claude three things:
 
 | Part | What it does |
 |---|---|
 | `bin/idm` | The `idm` command, on the agent's PATH while the plugin is on. |
 | `skills/idm/SKILL.md` | Teaches the agent when to use idm (any "download this"), how to read its JSON, and what to do for each error code. The agent reads it only when a download comes up. |
 | `hooks/halo.tsx` | halo, live under the agent's `idm get` and `idm wait` commands. |
+
+Installed as a command instead (`pipx install`), you get `idm` alone; `pyproject.toml` makes it one.
 
 ## The eval
 
@@ -48,7 +41,7 @@ python3 eval/run_eval.py --trials 3 --only busy   # one scenario, 3 times each w
 
 A run costs real tokens (a few cents to half a dollar with Sonnet). Each run's commands and last words are saved in `eval/results/`.
 
-## halo, the face (from phase 4)
+## halo, the face
 
 ```
                •         •     •              •
@@ -114,11 +107,31 @@ Claude Code folds shell commands into one line (`Ran 1 shell command`), which ha
 
 The colours are the "lavender" set picked from `mockups/experiments.py`. The look is the one approved there: beads ring, glyph face.
 
-## Many connections (from phase 3)
+## Many connections
 
-A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3's notes](https://github.com/Ajinkya259/idm-for-agent/tree/f5c8106/phase3/README.md#how-it-works) for the diagram.
+A free connection takes the second half of the biggest piece still missing, and every connection writes straight into its place in the `.part` file. The `.part.json` notes list the missing pieces, so a pause or crash resumes exactly. `--connections N` sets the most at once (1 to 16, default 8). See [phase 3's notes](https://github.com/Ajinkya259/IDM-for-Agents/blob/f5c8106/phase3/README.md#how-it-works) for the diagram.
 
-New in phase 5: when the server pushes back, an extra connection hands its piece to the others, **rests (1, 2, 4… s) and comes back**, rather than leaving for good. idm's first request now asks for one byte, so it doesn't hold a place the server could give a real connection. On a server that allows 2 connections at once, 8 MB went from 8.5 s to 5.3 s.
+When the server pushes back, an extra connection hands its piece to the others, **rests (1, 2, 4… s) and comes back**, rather than leaving for good. idm's first request asks for one byte, so it doesn't hold a place the server could give a real connection. On a server that allows 2 connections at once, 8 MB went from 8.5 s to 5.3 s.
+
+## Later, in order, and not too fast
+
+A download doesn't have to start now. Its worker starts at once, but waits its turn in the background before the first byte:
+
+1. **Its time.** `--at 02:00` (or `2am`, `11:30pm`, `'2026-11-25 02:00'`; a time without a date means the next one) or `--in 2h` (`30m`, `1h30m`, `2d`). The reply says `"state": "scheduled"`, `starts_at` and `starts_in`, and has no `next`: there's nothing to run until then. `get` replies at once rather than waiting hours. The worker naps a second at a time on the wall clock, which keeps going while the Mac sleeps, so it starts on time after a wake. `idm resume ID --now` starts it now; a paused one keeps its time when resumed.
+2. **The download it follows.** `--after ID` waits until that one has ended (done, failed or cancelled). The reply says `"state": "queued"` and `waiting_for`.
+3. **A free place.** At most `IDM_MAX_DOWNLOADS` (3) downloads run at once. Each running worker holds a lock on one of `~/.idm/places/N.lock`, and the lock goes with the process, however it ends, so a place never leaks. The others wait in line in the order they asked.
+
+`--limit 2M` keeps a download to 2 MB a second (`K` is 1,000), across all its connections. Every chunk waits for its turn on one shared clock, in pieces of an eighth of a second's worth, so the speed is even, not bursts and pauses. `idm limit ID 500K` changes it while the download runs (the worker reads it again every second), and `idm limit ID 0` removes it.
+
+## When a server goes silent
+
+A server that stops answering is the hardest failure to see: nothing errors, nothing moves. idm treats it like this:
+
+- **Short timeouts, separately.** A server gets 10 s to accept a connection, and 20 s of silence in the middle of a file, before that try counts as failed. (urllib has one timeout for both; idm's connections set them apart.)
+- **An honest status.** While nothing arrives, `speed` drops to 0, `eta` goes away, and `stalled` counts the seconds since the last byte. The `trouble` stays until bytes come again. halo says "nothing for 45s · timed out · retrying in 4s".
+- **A clear end.** After 2 minutes without a single byte on any connection (`IDM_PATIENCE`), idm stops with `NETWORK`, "nothing arrived for 2m", and `next`: `idm resume ID`. A busy server (429, 5xx) is different: it is answering, so it gets the usual 8 tries.
+
+A server that goes quiet for a while and comes back needs nothing from the agent: the connections try again and carry on.
 
 ## What a critic found, and what changed
 
@@ -140,7 +153,7 @@ A reviewer agent read the code and tried to break it. These are its findings tha
 
 Not changed, on purpose: a server that sends gzip despite being asked not to gets its bytes saved as sent, which is what browsers do for a `.tar.gz`.
 
-## The agent contract (from phase 2)
+## The agent contract
 
 `idm` is built so an AI agent (Claude Code, Codex, Cursor...) can use it without anyone watching:
 
@@ -228,10 +241,12 @@ $ idm get https://example.com/members/report.pdf
 | `idm/engine.py` | The download, step by step: `download()`. It talks to the server and keeps the `.part` file. |
 | `idm/crew.py` | Many connections on one file: `Missing` (the pieces, and splitting the biggest) and `Crew` (the connections). |
 | `idm/errors.py` | The error codes, their hints, `classify()` (any exception as a code), and the retry waits. |
+| `idm/when.py` | Times and speeds: reads `--at`, `--in` and `--limit`, and says times the way people do. |
 | `hooks/halo.tsx` | The Claude Code mod. It starts `idm watch --cells` for the agent's command and paints the frames. |
-| `.claude-plugin/plugin.json` | What makes this folder a Claude Code plugin. |
-| `skills/idm/SKILL.md` | **New:** how an agent should use idm. |
-| `eval/run_eval.py` | **New:** the eval. |
+| `.claude-plugin/` | `plugin.json` makes the repo a Claude Code plugin; `marketplace.json`, a marketplace of one. |
+| `pyproject.toml` | Makes `idm` a command you can install with pipx or pip. |
+| `skills/idm/SKILL.md` | How an agent should use idm. |
+| `eval/run_eval.py` | The eval. |
 
 A job's folder holds:
 - `job.json`: what to download.
@@ -241,7 +256,7 @@ A job's folder holds:
 ## Tests
 
 ```
-python3 tests/run_tests.py        # 100 checks: every command, every error code, the pieces, halo, the critic's finds
+python3 tests/run_tests.py        # 136 checks: every command and error code, the pieces, halo, the critic's finds, the queue
 claude plugin test .              # the mod: which commands it watches, the face under them
 python3 tests/testserver.py       # the misbehaving local server on its own, to try things by hand
 ```
