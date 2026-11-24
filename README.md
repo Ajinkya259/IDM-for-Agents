@@ -37,7 +37,7 @@ Watching in a terminal, space pauses and resumes, and q leaves it running. Video
 
 ## What it does for an agent
 
-- **Clear failures.** 17 error codes (`NOT_FOUND`, `AUTH_REQUIRED`, `RATE_LIMITED`...), each with a `hint` and, where there is one, `next`: the exact command to run.
+- **Clear failures.** 18 error codes (`NOT_FOUND`, `AUTH_REQUIRED`, `RATE_LIMITED`...), each with a `hint` and, where there is one, `next`: the exact command to run.
 - **Fast and safe.** Up to 16 connections on one file, resume after any stop, and an ETag check on every piece, so a file that changes mid-download is never saved as a mix.
 - **Never cut off.** Big downloads run in the background; `idm get` replies within 90 seconds and `idm wait` picks up from there.
 - **Patient, not stuck.** A silent server shows up as `stalled`, and after 2 minutes with no byte idm stops and says so.
