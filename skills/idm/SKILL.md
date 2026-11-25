@@ -75,5 +75,5 @@ something to run next, the reply has `next`: the exact command.
   `--cookies FILE`, `--connections N` (1-16, default 8), `--again` (download again),
   `--at`, `--in`, `--after`, `--limit`, `--audio`, `--video`.
 - Exit codes: 0 fine, 1 failed, 2 bad command, 3 failed but worth retrying (run `next`).
-- The person sees the download as halo, an animated face, in their terminal; you only need
+- The person sees the download as dotty, an animated face, in their terminal; you only need
   the JSON.

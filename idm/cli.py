@@ -6,12 +6,12 @@ IDM for Agents: a download manager made for AI agents (and people).
                              (both take --at TIME / --in WAIT, --after ID and --limit SPEED)
     idm wait ID            wait for a download to finish
     idm status ID          how a download is going, right now
-    idm watch [ID]         show it as halo, the face (no ID: every download, as it happens)
+    idm watch [ID]         show it as dotty, the face (no ID: every download, as it happens)
     idm list               every download
     idm limit ID SPEED     change a download's speed limit (0: none), even while it runs
     idm pause ID | resume ID [--now] | cancel ID
 
-People see halo, the face, while get, wait and watch run (in a terminal big enough for it).
+People see dotty, the face, while get, wait and watch run (in a terminal big enough for it).
 
 When an agent runs it (output is not a terminal, or --json), every command prints exactly one
 line of JSON: `ok`, the download's `state`, and on failure an `error` with a fixed `code`,
@@ -32,7 +32,7 @@ import time
 import tty
 import urllib.parse
 
-from . import __version__, halo, jobs, video, when
+from . import __version__, dotty, jobs, video, when
 from .errors import RETRYABLE, IDMError, from_disk
 
 AGENT_WAIT = 90     # seconds an agent's get/wait may take (tool calls are cut off at ~120 s)
@@ -338,15 +338,15 @@ def next_download(out):
 
 
 def stream_cells(job):
-    """halo as terminal cells, one JSON line a frame (10 a second) until the download ends:
+    """dotty as terminal cells, one JSON line a frame (10 a second) until the download ends:
     what the Claude Code mod shows under the agent's command."""
-    face = halo.Halo()
+    face = dotty.Dotty()
     try:
         while True:
             st = job.status()
             final = st.get("state") in jobs.FINAL
             pic = face.draw(st, time.time(), settle=final)
-            label = " · ".join(text for text, _ in halo.caption(st) if text)
+            label = " · ".join(text for text, _ in dotty.caption(st) if text)
             print(json.dumps({"state": st.get("state"), "percent": percent(st), "label": label,
                               "columns": pic.columns, "rows": pic.rows, "cells": pic.packed()}),
                   flush=True)
@@ -463,7 +463,7 @@ class Output:
 
     def __init__(self, json_mode):
         self.json, self.line_drawn = json_mode, False
-        self.face = None if json_mode or not halo.fits() else halo.Halo()
+        self.face = None if json_mode or not dotty.fits() else dotty.Dotty()
         self.face_rows = 0                                 # how many rows of it are on screen
         self.stopped = False                               # the person pressed Ctrl+C (or q)
         self.keys = False                                  # a person's keys work (show them)
@@ -511,11 +511,11 @@ class Output:
             self.line_drawn = True
 
     def draw_face(self, st, settle=False):
-        """Draw halo over the one drawn last (with the keys under it, while they work)."""
+        """Draw dotty over the one drawn last (with the keys under it, while they work)."""
         rows = self.face.draw(st, time.time(), settle).ansi()
         if self.keys or self.face_rows > len(rows):        # (a blank row clears the keys after)
             hint = "" if settle or not self.keys else key_hint(st)
-            rows.append(f"\x1b[2m{hint.center(halo.COLUMNS)}\x1b[0m")
+            rows.append(f"\x1b[2m{hint.center(dotty.COLUMNS)}\x1b[0m")
         up = f"\x1b[{self.face_rows}F" if self.face_rows else ""
         sys.stdout.write(up + "".join(row + "\x1b[K\n" for row in rows))
         sys.stdout.flush()
@@ -525,7 +525,7 @@ class Output:
         """How it ended: the last dots fly home, then the face stays as it is.  Ctrl+C skips
         to the end."""
         try:
-            end = time.time() + halo.FLY
+            end = time.time() + dotty.FLY
             while time.time() < end:
                 self.draw_face(st)
                 time.sleep(0.05)
@@ -536,7 +536,7 @@ class Output:
     def new_face(self):
         """The next download gets a face of its own, under the last one."""
         if self.face:
-            self.face, self.face_rows = halo.Halo(), 0
+            self.face, self.face_rows = dotty.Dotty(), 0
 
     def emit(self, reply, human_lines):
         if self.json:
@@ -676,7 +676,7 @@ def parser(out):
     c = command("limit", cmd_limit, "change a download's speed limit, even while it runs")
     c.add_argument("id")
     c.add_argument("speed", help="500K, 2M... or 0 for no limit")
-    c = command("watch", cmd_watch, "show a download as halo, the face (no ID: every download)")
+    c = command("watch", cmd_watch, "show a download as dotty, the face (no ID: every download)")
     c.add_argument("job", nargs="?", metavar="ID|LINK")
     c.add_argument("--max", type=float, metavar="SECONDS", help="stop watching after this long")
     c.add_argument("--cells", action="store_true", help=argparse.SUPPRESS)   # for the mod

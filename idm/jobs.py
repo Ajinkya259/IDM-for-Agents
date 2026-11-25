@@ -8,7 +8,7 @@ watch and stop workers.
 Each job lives in a folder, ~/.idm/jobs/<id>/:
     job.json      what to download (written by `idm get` / `idm start`)
     status.json   how it is going, rewritten by the worker about 5 times a second (what
-                  replies and halo are made from)
+                  replies and dotty are made from)
     worker.log    anything the worker printed, for debugging
 
 Before it downloads, a worker waits its turn: for its time (--at, --in), for the download it

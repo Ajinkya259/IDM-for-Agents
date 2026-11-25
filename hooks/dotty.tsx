@@ -1,5 +1,5 @@
 /**
- * halo inside Claude Code: while the agent runs `idm get` or `idm wait`, the download's face
+ * dotty inside Claude Code: while the agent runs `idm get` or `idm wait`, the download's face
  * shows live under its command.
  *
  * The face is drawn by idm itself (`idm watch ... --cells`, the same face as in a terminal),
@@ -67,7 +67,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {row}
-          <Raster key="halo" columns={frame.columns} rows={frame.rows} cells={frame.cells} />
+          <Raster key="dotty" columns={frame.columns} rows={frame.rows} cells={frame.cells} />
         </Box>
       )
     }
@@ -200,7 +200,7 @@ async function draw($: EngineInterface, id: string, frame: Frame, frames: Map<st
   const before = frames.get(id)
   frames.set(id, frame)
   const changed = !before || before.percent !== frame.percent || before.state !== frame.state
-  const painted = before ? await $.ui.blit({ requestId: id, key: 'halo', cells: frame.cells }) : null
+  const painted = before ? await $.ui.blit({ requestId: id, key: 'dotty', cells: frame.cells }) : null
   if (changed || !painted || 'deny' in painted) {
     $.ui.invalidate('ui.render')
   }

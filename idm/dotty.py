@@ -1,5 +1,5 @@
 """
-halo: the face that shows a download.
+dotty: the face that shows a download.
 
 A ring of 32 dots floats around a face.  As the file arrives the dots fly in, one by one, to
 form the ring (each dot is 1/32 of the file), and the face shows the % and how it feels:
@@ -41,9 +41,9 @@ MOODS = {
 }
 
 
-class Halo:
+class Dotty:
     """The face for one download.  It remembers when each dot came in, so dots fly home
-    once and then stay; make a new Halo for another download."""
+    once and then stay; make a new Dotty for another download."""
 
     def __init__(self):
         self.came_in = [None] * DOTS                       # when each dot set off for home

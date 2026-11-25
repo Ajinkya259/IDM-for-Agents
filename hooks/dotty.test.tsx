@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { watchTarget } from './halo'
+import { watchTarget } from './dotty'
 
 // Two cells, "●●" in the ring colour: what `idm watch --cells` sends, made small.
 const words = Uint32Array.of(0x25cf, 0x7456dd, 0x01000000, 0x25cf, 0x7456dd, 0x01000000)
@@ -67,7 +67,7 @@ test('the face shows under the command, and stays once the download is done', as
   await clock.advance(2000) // the command has ended and the face has had its time
 
   const terminal = await $.ui.mount({ ...row('toolu_done'), surface: 'terminal' })
-  expect(await terminal.find({ type: 'Raster', key: 'halo' })).toBeDefined()
+  expect(await terminal.find({ type: 'Raster', key: 'dotty' })).toBeDefined()
   await terminal.unmount()
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const app = await $.ui.mount({ ...row('toolu_done'), surface })

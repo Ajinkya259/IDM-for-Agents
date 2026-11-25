@@ -6,7 +6,7 @@ site's own machinery: signed links that expire, the picture and the sound as sep
 streams, and changes every few weeks.  yt-dlp knows every site's machinery and keeps up,
 so for these links idm hands the downloading to yt-dlp, and stays the part the agent
 talks to: the same JSON, error codes and `next`, the background job, pause, resume,
-cancel, the schedule, the queue, the speed limit, and halo.
+cancel, the schedule, the queue, the speed limit, and dotty.
 
     1. ask yt-dlp what the video is: its file name and size (saved as video.json)
     2. let yt-dlp download it from that answer, reading its progress into status.json

@@ -10,7 +10,7 @@
     {
       "name": "idm-for-agents",
       "source": "./",
-      "description": "A download manager made for AI agents, with halo, the download face"
+      "description": "A download manager made for AI agents, with dotty, the download face"
     }
   ]
 }

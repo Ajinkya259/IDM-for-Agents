@@ -4,7 +4,7 @@ A download manager for AI agents. The agent runs `idm get URL` and gets one line
 
 It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hugging Face) and videos (YouTube, Instagram, TikTok and more). It needs Python 3.9+ and has no dependencies.
 
-<img src="docs/halo-download.gif" width="560" alt="halo, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
+<img src="docs/dotty-download.gif" width="560" alt="dotty, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
 
 ## Install
 
@@ -16,7 +16,7 @@ pipx install git+https://github.com/Ajinkya259/IDM-for-Agents
 
 `uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents` works too. Videos also need yt-dlp: `brew install yt-dlp ffmpeg`.
 
-**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and halo under each download. Inside Claude Code:
+**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and dotty under each download. Inside Claude Code:
 
 ```
 /plugin marketplace add Ajinkya259/IDM-for-Agents
@@ -56,7 +56,7 @@ $ idm get https://example.com/members/report.pdf
 
 Exit codes: 0 means fine, 1 failed, 2 a bad command, and 3 failed but worth retrying (run `next`).
 
-<img src="docs/halo-in-claude-code.gif" width="720" alt="A Claude Code session: the user says download this, the agent runs idm get, halo fills under the command, and the agent gets one line of JSON.">
+<img src="docs/dotty-in-claude-code.gif" width="720" alt="A Claude Code session: the user says download this, the agent runs idm get, dotty fills under the command, and the agent gets one line of JSON.">
 
 ## Commands
 
@@ -69,7 +69,7 @@ idm start URL --after ID         start when that download ends
 idm start URL --limit 2M         at most 2 MB/s
 idm wait | status | pause | resume | cancel ID
 idm limit ID SPEED               change the speed limit while it runs (0: none)
-idm watch [ID]                   show halo (no ID: every download)
+idm watch [ID]                   show dotty (no ID: every download)
 idm list                         the latest 20 downloads
 ```
 
@@ -109,6 +109,6 @@ In an eval, real Claude Code agents downloaded from a server that fails on purpo
 
 Both curl misses saved the server's error reply as the file.
 
-[docs/GUIDE.md](docs/GUIDE.md) covers every error code, halo, the queue, the eval and the code layout.
+[docs/GUIDE.md](docs/GUIDE.md) covers every error code, dotty, the queue, the eval and the code layout.
 
 The repo is private for now, and it has no license yet.

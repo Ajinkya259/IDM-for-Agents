@@ -122,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.send_header("Accept-Ranges", "none" if opts.no_ranges else "bytes")
         self.send_header("ETag", f'"test-v{opts.version}"')
-        self.send_header("Content-Disposition", 'attachment; filename="halo test.bin"')
+        self.send_header("Content-Disposition", 'attachment; filename="dotty test.bin"')
         self.end_headers()
         pos, sent = start, 0
         while pos <= end:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Tests for idm: every command, every error code, the background jobs, downloading in pieces
-over many connections, halo (in a terminal, and as cells for Claude Code), what a critic
+over many connections, dotty (in a terminal, and as cells for Claude Code), what a critic
 found broken, phase 6 (scheduling, the waiting line, speed limits, silent servers),
 phase 7 (videos), phase 8 (share links: Drive, Dropbox, OneDrive, GitHub, Hugging Face), and
 what a review of the whole code found.
@@ -39,7 +39,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 IDM = [sys.executable, str(HERE.parent / "bin" / "idm")]
 sys.path.insert(0, str(HERE.parent))
-from idm import cli, engine, halo, jobs, shares, video, when  # noqa: E402  (needs the path above)
+from idm import cli, dotty, engine, jobs, shares, video, when  # noqa: E402  (needs the path above)
 from idm.errors import IDMError  # noqa: E402
 from idm.crew import MIN_PIECE, Missing  # noqa: E402
 TESTS, RESULTS = [], []
@@ -120,7 +120,7 @@ class Sandbox:
     def files(self):
         return sorted(os.listdir(self.dl)) if self.dl.exists() else []
 
-    def notes(self, name="halo test.bin"):
+    def notes(self, name="dotty test.bin"):
         return json.loads((self.dl / f"{name}.part.json").read_text())
 
     def clean(self):
@@ -204,12 +204,12 @@ def in_terminal(args, env, interrupt_after=None, timeout=60, size=(40, 100), key
 def get_downloads_the_file():
     srv, box = Server(), Sandbox()
     code, r = box.get(srv.url())
-    f = box.dl / "halo test.bin"
+    f = box.dl / "dotty test.bin"
     check("get: exit 0, ok, state done", code == 0 and r.get("ok") and r.get("state") == "done", r)
     check("get: the reply says where the file is, its size and how long it took",
           r.get("file") == str(f) and r.get("bytes") == 2_000_000 and "seconds" in r, r)
     check("get: the bytes are exactly right", f.exists() and sha(f) == srv.sha())
-    check("get: no .part or notes left behind", box.files() == ["halo test.bin"], box.files())
+    check("get: no .part or notes left behind", box.files() == ["dotty test.bin"], box.files())
 
 
 @test
@@ -219,10 +219,10 @@ def same_get_twice_does_not_download_twice():
     code, again = box.get(srv.url())
     check("get twice: second reply is the same job, already: true",
           code == 0 and again.get("job") == first.get("job") and again.get("already") is True, again)
-    check("get twice: still one file", box.files() == ["halo test.bin"], box.files())
+    check("get twice: still one file", box.files() == ["dotty test.bin"], box.files())
     _, fresh = box.get(srv.url(), "--again")
     check("get --again: a new job and a second copy",
-          fresh.get("job") != first.get("job") and "halo test (1).bin" in box.files(), (fresh, box.files()))
+          fresh.get("job") != first.get("job") and "dotty test (1).bin" in box.files(), (fresh, box.files()))
 
 
 @test
@@ -255,7 +255,7 @@ def login_needed():
     code, r2 = box.get(srv.url("/secret.bin"), "--header", "Authorization: Bearer ok")
     check("403 then --header: the same job carries on and succeeds",
           code == 0 and r2.get("state") == "done" and r2.get("job") == r.get("job"), r2)
-    check("403 then --header: right bytes", sha(box.dl / "halo test.bin") == srv.sha())
+    check("403 then --header: right bytes", sha(box.dl / "dotty test.bin") == srv.sha())
 
 
 @test
@@ -344,7 +344,7 @@ def busy_server_is_waited_for():
     check("429 twice: while waiting, status shows trouble RATE_LIMITED", "RATE_LIMITED" in seen, seen)
     code, done = box.idm("wait", r["job"])
     check("429 twice: then downloads, right bytes",
-          code == 0 and done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
+          code == 0 and done.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), done)
 
 
 @test
@@ -352,7 +352,7 @@ def dropped_connection_recovers():
     srv, box = Server("--drop", "1", size=4), Sandbox()
     code, r = box.get(srv.url())
     check("connection cut at 1 MB: carries on, right bytes",
-          code == 0 and sha(box.dl / "halo test.bin") == srv.sha(), r)
+          code == 0 and sha(box.dl / "dotty test.bin") == srv.sha(), r)
 
 
 @test
@@ -381,7 +381,7 @@ def start_replies_at_once_then_wait():
           code == 0 and mid.get("state") == "downloading" and 0 < mid.get("percent", 0) < 100
           and (mid.get("speed") or 0) > 0 and "eta" in mid, mid)
     code, done = box.idm("wait", r["job"])
-    check("wait: done, right bytes", done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
+    check("wait: done, right bytes", done.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), done)
 
 
 @test
@@ -407,7 +407,7 @@ def pause_and_resume():
           code == 0 and p.get("state") == "paused" and 0 < p.get("percent", 0) < 100
           and p.get("next") == f"idm resume {job}", p)
     check("pause: the worker has stopped, the .part file stays",
-          not alive(pid) and "halo test.bin.part" in box.files(), box.files())
+          not alive(pid) and "dotty test.bin.part" in box.files(), box.files())
     missing = box.notes().get("missing", [])
     check("pause: the notes list the pieces still missing (several: it was downloading in pieces)",
           len(missing) >= 2 and sum(b - a for a, b in missing) == 8_000_000 - p["bytes"], missing)
@@ -415,7 +415,7 @@ def pause_and_resume():
     check("resume: downloading again", code == 0 and again.get("state") in ("queued", "downloading"), again)
     code, done = box.idm("wait", job)
     check("resume: finishes with the right bytes",
-          done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
+          done.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), done)
 
 
 @test
@@ -443,7 +443,7 @@ def worker_killed_is_reported_and_resumable():
     box.idm("resume", job)
     code, done = box.idm("wait", job)
     check("worker killed: resume finishes with the right bytes",
-          done.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), done)
+          done.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), done)
 
 
 @test
@@ -459,7 +459,7 @@ def agent_cut_off_then_same_get_reattaches():
     check("cut off, then the same get: one job, carried on to done",
           code == 0 and r.get("state") == "done" and len(jobs) == 1, (r, jobs))
     check("cut off, then the same get: one file, right bytes",
-          box.files() == ["halo test.bin"] and sha(box.dl / "halo test.bin") == srv.sha(), box.files())
+          box.files() == ["dotty test.bin"] and sha(box.dl / "dotty test.bin") == srv.sha(), box.files())
 
 
 @test
@@ -473,7 +473,7 @@ def pause_resume_on_server_that_cannot_resume():
     note = box.status_file(r["job"]).get("note", "")
     check("no-ranges server: resume starts over (and says so), right bytes",
           done.get("state") == "done" and "can't resume" in (note or "")
-          and sha(box.dl / "halo test.bin") == srv.sha(), (done, note))
+          and sha(box.dl / "dotty test.bin") == srv.sha(), (done, note))
 
 
 @test
@@ -490,7 +490,7 @@ def file_changed_while_paused():
     note = box.status_file(r["job"]).get("note", "")
     check("file changed while paused: noticed, starts over, gets the NEW bytes",
           done.get("state") == "done" and "changed" in (note or "")
-          and sha(box.dl / "halo test.bin") == srv.sha(), (done, note))
+          and sha(box.dl / "dotty test.bin") == srv.sha(), (done, note))
 
 
 @test
@@ -572,7 +572,7 @@ def server_that_limits_connections():
     code, r = box.get(srv.url())
     check("server allows 2 at once: the extra connections step back, the download finishes",
           code == 0 and r.get("state") == "done" and srv.stats()["peak"] <= 2, (r, srv.stats()))
-    check("server allows 2 at once: right bytes", sha(box.dl / "halo test.bin") == srv.sha())
+    check("server allows 2 at once: right bytes", sha(box.dl / "dotty test.bin") == srv.sha())
 
 
 @test
@@ -591,13 +591,13 @@ def resumes_what_phase_2_left():
     srv, box = Server(size=4), Sandbox()
     box.dl.mkdir(parents=True)
     pattern = bytes((i + 1) % 251 for i in range(251))
-    (box.dl / "halo test.bin.part").write_bytes((pattern * 4000)[:1_000_000])   # 1 MB, from the start
-    (box.dl / "halo test.bin.part.json").write_text(json.dumps(
+    (box.dl / "dotty test.bin.part").write_bytes((pattern * 4000)[:1_000_000])   # 1 MB, from the start
+    (box.dl / "dotty test.bin.part.json").write_text(json.dumps(
         {"url": srv.url(), "size": 4_000_000, "fingerprint": '"test-v1"'}))        # no "missing"
     code, r = box.get(srv.url())
     note = box.status_file(r["job"]).get("note", "")
     check("a phase 2 .part file: resumed from its 1 MB, right bytes",
-          code == 0 and "1,000,000" in (note or "") and sha(box.dl / "halo test.bin") == srv.sha(),
+          code == 0 and "1,000,000" in (note or "") and sha(box.dl / "dotty test.bin") == srv.sha(),
           (r, note))
 
 
@@ -642,7 +642,7 @@ def two_links_with_one_name_keep_apart():
     a, b, box = Server(size=4, rate=1), Server("--version", "3", size=4, rate=1), Sandbox()
     _, ra = box.start(a.url())
     time.sleep(0.5)
-    _, rb = box.start(b.url())                                      # both are "halo test.bin"
+    _, rb = box.start(b.url())                                      # both are "dotty test.bin"
     da, db = box.idm("wait", ra["job"])[1], box.idm("wait", rb["job"])[1]
     check("two links whose files have the same name: two files, each with its own bytes",
           da.get("state") == db.get("state") == "done" and da["file"] != db["file"]
@@ -656,7 +656,7 @@ def same_get_at_the_same_moment_downloads_once():
                              stdout=subprocess.PIPE, text=True) for _ in range(3)]
     replies = [json.loads(p.communicate(timeout=60)[0]) for p in runs]
     check("three `idm get`s of one link at once: one job, one file, all three done",
-          {r["job"] for r in replies} == {replies[0]["job"]} and box.files() == ["halo test.bin"]
+          {r["job"] for r in replies} == {replies[0]["job"]} and box.files() == ["dotty test.bin"]
           and all(r["state"] == "done" for r in replies), (replies, box.files()))
 
 
@@ -710,18 +710,18 @@ def cancel_keeps_a_finished_file():
     _, r = box.get(srv.url())
     code, c = box.idm("cancel", r["job"])
     check("cancel on a finished download: nothing deleted, still done",
-          c.get("state") == "done" and box.files() == ["halo test.bin"], (c, box.files()))
+          c.get("state") == "done" and box.files() == ["dotty test.bin"], (c, box.files()))
 
 
-# ---- halo, the face (phase 4) ------------------------------------------------------------------------
+# ---- dotty, the face (phase 4) ------------------------------------------------------------------------
 TRUE_COLOUR = {"COLORTERM": "truecolor"}
-FACE_COLOUR = "\x1b[48;2;180;156;255m"                 # halo.FACE as a background
+FACE_COLOUR = "\x1b[48;2;180;156;255m"                 # dotty.FACE as a background
 
 
 def ring_dots(pic):
     """How many of the ring's dots are home (drawn as ● in the ring colour)."""
-    return sum(1 for row in pic.cells[:halo.H] for char, fg, _, _ in row
-               if char == "●" and fg == halo.RING)
+    return sum(1 for row in pic.cells[:dotty.H] for char, fg, _, _ in row
+               if char == "●" and fg == dotty.RING)
 
 
 def words(pic):
@@ -729,7 +729,7 @@ def words(pic):
 
 
 @test
-def halo_draws_every_state():
+def dotty_draws_every_state():
     base = {"state": "downloading", "bytes": 50, "size": 100, "speed": 10, "eta": 5,
             "connections": 8, "file": "/tmp/a.zip", "job": "ab12cd"}
     states = {
@@ -746,30 +746,30 @@ def halo_draws_every_state():
         "size unknown": ({**base, "size": None, "bytes": 3_000_000}, "●    ●", 0),
     }
     for name, (st, eyes, dots) in states.items():
-        pic = halo.Halo().draw(st, 100.0, settle=True)
+        pic = dotty.Dotty().draw(st, 100.0, settle=True)
         text = "\n".join(words(pic))
         cells = base64.b64decode(pic.packed())
         chars = {cell[0] for row in pic.cells for cell in row}
         one_wide = all(unicodedata.east_asian_width(c) not in "WF" and unicodedata.category(c)[0]
                        not in "CM" and ord(c) < 0x10000 for c in chars)
-        check(f"halo, {name}: {eyes.split()[0]} eyes, {dots} dots home, {halo.COLUMNS}x{halo.ROWS}"
+        check(f"dotty, {name}: {eyes.split()[0]} eyes, {dots} dots home, {dotty.COLUMNS}x{dotty.ROWS}"
               " cells that Claude Code can draw",
               eyes in text and ring_dots(pic) == dots and (pic.columns, pic.rows) == (56, 20)
               and len(cells) == 56 * 20 * 12 and one_wide, (text, ring_dots(pic)))
-    paused = "\n".join(words(halo.Halo().draw(states["paused"][0], 0)))
-    check("halo, paused: says how to carry on", "idm resume ab12cd" in paused, paused)
-    connecting = "\n".join(words(halo.Halo().draw(states["connecting"][0], 0)))
-    check("halo, connecting: a curious look (o) and 'starting…' until the first bytes",
-          "o" in connecting.splitlines()[halo.CY] and "starting…" in connecting, connecting)
+    paused = "\n".join(words(dotty.Dotty().draw(states["paused"][0], 0)))
+    check("dotty, paused: says how to carry on", "idm resume ab12cd" in paused, paused)
+    connecting = "\n".join(words(dotty.Dotty().draw(states["connecting"][0], 0)))
+    check("dotty, connecting: a curious look (o) and 'starting…' until the first bytes",
+          "o" in connecting.splitlines()[dotty.CY] and "starting…" in connecting, connecting)
 
 
 @test
-def halo_dots_fly_home_one_by_one():
-    face, st = halo.Halo(), {"state": "downloading", "bytes": 0, "size": 100}
+def dotty_dots_fly_home_one_by_one():
+    face, st = dotty.Dotty(), {"state": "downloading", "bytes": 0, "size": 100}
     face.draw(st, 0.0)
     flying = face.draw({**st, "bytes": 25}, 1.0)                # 8 dots' worth just came in
-    landed = face.draw({**st, "bytes": 25}, 1.0 + halo.FLY)
-    check("halo: a dot flies in when its 1/32 of the file arrives, and lands in 0.8 s",
+    landed = face.draw({**st, "bytes": 25}, 1.0 + dotty.FLY)
+    check("dotty: a dot flies in when its 1/32 of the file arrives, and lands in 0.8 s",
           ring_dots(flying) == 0 and ring_dots(landed) == 8, (ring_dots(flying), ring_dots(landed)))
 
 
@@ -789,7 +789,7 @@ def watch_streams_cells_until_done():
     states = [f["state"] for f in frames]
     check("watch --cells: follows it to the end, and stops there with 'done' at 100%",
           "downloading" in states and states[-1] == "done" and frames[-1]["percent"] == 100
-          and "halo test.bin" in frames[-1]["label"], (states[::10], frames[-1]["label"]))
+          and "dotty test.bin" in frames[-1]["label"], (states[::10], frames[-1]["label"]))
 
 
 @test
@@ -817,21 +817,21 @@ def watch_for_an_agent_replies_like_wait():
 
 
 @test
-def person_sees_halo():
+def person_sees_dotty():
     srv, box = Server(size=4, rate=1), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env)
-    redraws = shown.count(f"\x1b[{halo.ROWS + 1}F")             # the face, and the keys under it
-    check("in a big true-colour terminal: halo is drawn and redrawn in place, ends happy, then ✓",
+    redraws = shown.count(f"\x1b[{dotty.ROWS + 1}F")             # the face, and the keys under it
+    check("in a big true-colour terminal: dotty is drawn and redrawn in place, ends happy, then ✓",
           code == 0 and FACE_COLOUR in shown and redraws > 5 and "▽" in shown     # ▽: joy
           and "✓ saved" in shown, (code, redraws, shown[-300:]))
 
 
 @test
-def person_ctrl_c_with_halo_pauses():
+def person_ctrl_c_with_dotty_pauses():
     srv, box = Server(size=8, rate=0.5), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, interrupt_after=1.5)
     jobs = box.idm("list")[1].get("jobs", [])
-    check("Ctrl+C with halo showing: the download pauses, the face says how to carry on",
+    check("Ctrl+C with dotty showing: the download pauses, the face says how to carry on",
           "carry on: idm resume" in shown and jobs and jobs[0]["state"] == "paused",
           (shown[-300:], jobs))
 
@@ -840,7 +840,7 @@ def person_ctrl_c_with_halo_pauses():
 def small_terminal_gets_the_line():
     srv, box = Server(size=2, rate=2), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, size=(24, 50))
-    check("in a terminal too small for halo: the one progress line instead",
+    check("in a terminal too small for dotty: the one progress line instead",
           code == 0 and FACE_COLOUR not in shown and "MB/s" in shown and "✓ saved" in shown,
           shown[-300:])
 
@@ -878,7 +878,7 @@ def scheduled_job_starts_at_its_time():
     done = wait_until(lambda: box.status_file(job).get("state") == "done", timeout=20)
     started = box.status_file(job).get("started", 0) - t0
     check("it starts at its time, not before, and saves the right file",
-          done and 2.8 <= started <= 6 and sha(box.dl / "halo test.bin") == srv.sha(),
+          done and 2.8 <= started <= 6 and sha(box.dl / "dotty test.bin") == srv.sha(),
           f"started after {started:.1f}s")
 
 
@@ -895,7 +895,7 @@ def get_at_a_clock_time_replies_at_once_and_resume_now_starts_it():
     code, now = box.idm("resume", job, "--now")
     check("resume --now: it starts now", now.get("state") in ("queued", "downloading"), now)
     code, w = box.idm("wait", job)
-    check("...and downloads", w.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), w)
+    check("...and downloads", w.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), w)
 
 
 @test
@@ -985,7 +985,7 @@ def speed_limit():
     code, r = box.get(srv.url(), "--limit", "500K")
     took = time.time() - t0
     check("--limit 500K: 2 MB takes about 4 s (not a fraction of one), and the bytes are right",
-          r.get("state") == "done" and 3.3 <= took <= 9 and sha(box.dl / "halo test.bin") == srv.sha(),
+          r.get("state") == "done" and 3.3 <= took <= 9 and sha(box.dl / "dotty test.bin") == srv.sha(),
           f"{took:.1f}s {r}")
 
 
@@ -1032,7 +1032,7 @@ def a_server_silent_for_a_while_is_waited_out():
     box = Sandbox(IDM_READ_TIMEOUT="1", IDM_PATIENCE="20")
     code, r = box.get(srv.url(), "--max", "40")
     check("a server that goes quiet for 3 s, then comes back: the download carries on by itself",
-          r.get("state") == "done" and sha(box.dl / "halo test.bin") == srv.sha(), r)
+          r.get("state") == "done" and sha(box.dl / "dotty test.bin") == srv.sha(), r)
 
 
 @test
@@ -1046,9 +1046,9 @@ def a_server_that_never_answers_is_given_up_on_in_seconds():
 
 
 @test
-def halo_says_when_and_what_it_waits_for():
+def dotty_says_when_and_what_it_waits_for():
     def lines(**st):
-        return [text for text, _ in halo.caption({"url": "http://x/a.zip", **st})]
+        return [text for text, _ in dotty.caption({"url": "http://x/a.zip", **st})]
     later = lines(state="scheduled", starts_at=time.time() + 5400)
     check("scheduled: when it starts, and how long till then",
           later[1].startswith("starts at") and later[2] in ("in 1h 29m", "in 1h 30m"), later)
@@ -1081,7 +1081,7 @@ def youtube_link_downloads_through_ytdlp():
     check("its picture and sound, joined, byte for byte, and nothing else left",
           f.exists() and sha(f) == clip_sha() and box.files() == [CLIP], box.files())
     st = box.status_file(r.get("job", "?"))
-    check("the status has the video's size (its streams together), for halo's percent",
+    check("the status has the video's size (its streams together), for dotty's percent",
           st.get("size") == 3_000_000, st)
 
 
@@ -1172,7 +1172,7 @@ def person_space_pauses_and_resumes():
                               keys=((1.5, " "), (4, " ")))
     check("space pauses (it says how to resume), space again resumes, and it finishes",
           code == 0 and "space resume" in shown and "✓ saved" in shown
-          and sha(box.dl / "halo test.bin") == srv.sha(), shown[-300:])
+          and sha(box.dl / "dotty test.bin") == srv.sha(), shown[-300:])
 
 
 @test
@@ -1189,7 +1189,7 @@ def person_q_leaves_it_running():
 
 
 @test
-def person_sees_the_keys_under_halo():
+def person_sees_the_keys_under_dotty():
     srv, box = Server(size=3, rate=0.5), Sandbox(**TRUE_COLOUR)
     code, shown = in_terminal(["get", srv.url(), "-d", str(box.dl)], box.env, keys=((1, "q"),))
     check("the keys are written under the face", "space pause" in shown, shown[-300:])
@@ -1409,8 +1409,8 @@ def a_resume_carries_on_under_its_earlier_name():
     srv, box = Server(size=4), Sandbox()
     box.dl.mkdir(parents=True)
     pattern = bytes((i + 1) % 251 for i in range(251))
-    (box.dl / "halo test (1).bin.part").write_bytes((pattern * 4000)[:1_000_000])   # last time,
-    (box.dl / "halo test (1).bin.part.json").write_text(json.dumps(                  # its name was
+    (box.dl / "dotty test (1).bin.part").write_bytes((pattern * 4000)[:1_000_000])   # last time,
+    (box.dl / "dotty test (1).bin.part.json").write_text(json.dumps(                  # its name was
         {"url": srv.url(), "size": 4_000_000, "fingerprint": '"test-v1"'}))          # taken
 
     class Seen(engine.Report):
@@ -1419,10 +1419,10 @@ def a_resume_carries_on_under_its_earlier_name():
 
     seen = Seen()
     saved = engine.download(jobs.Job(id="t", url=srv.url(), folder=str(box.dl)), seen)
-    check("its name is free now, but the bytes from last time are under 'halo test (1).bin': "
+    check("its name is free now, but the bytes from last time are under 'dotty test (1).bin': "
           "kept, and the file finished there", seen.kept == (None, 1_000_000)
-          and saved == str(box.dl / "halo test (1).bin") and sha(saved) == srv.sha()
-          and box.files() == ["halo test (1).bin"], (getattr(seen, "kept", None), box.files()))
+          and saved == str(box.dl / "dotty test (1).bin") and sha(saved) == srv.sha()
+          and box.files() == ["dotty test (1).bin"], (getattr(seen, "kept", None), box.files()))
 
 
 @test
@@ -1492,8 +1492,8 @@ def again_while_it_runs_is_that_run():
 
 
 @test
-def halo_says_what_is_wrong_before_the_first_byte():
-    lines = halo.caption({"state": "downloading", "file": "/dl/a.zip", "bytes": None,
+def dotty_says_what_is_wrong_before_the_first_byte():
+    lines = dotty.caption({"state": "downloading", "file": "/dl/a.zip", "bytes": None,
                           "trouble": {"message": "the server said 429 Too Many Requests", "retry_in": 2}})
     check("a server that pushes back from the start: its complaint shows, not 'starting…'",
           any("429" in text for text, _ in lines), lines)

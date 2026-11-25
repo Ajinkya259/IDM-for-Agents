@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "idm-for-agents"
 dynamic = ["version"]
-description = "A download manager made for AI agents: one JSON line per command, error codes with the next step, many connections, resume, scheduling, and halo, a face that shows the download live."
+description = "A download manager made for AI agents: one JSON line per command, error codes with the next step, many connections, resume, scheduling, and dotty, a face that shows the download live."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = []                        # the Python standard library only
