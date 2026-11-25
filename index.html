@@ -1,0 +1,1066 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IDM for Agents</title>
+<meta name="description" content="A download manager for AI agents. The agent runs idm get URL and gets one line of JSON: the file's path, or an error code with the next command to run.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#18171b">
+<meta property="og:title" content="IDM for Agents">
+<meta property="og:description" content="A download manager for AI agents: one line of JSON per command, and an error code with the next command when something fails.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Shantell+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 9'%3E%3Cpath fill='%23B49CFF' d='M2 0h5v1h1v1h1v5h-1v1h-1v1h-5v-1h-1v-1h-1v-5h1v-1h1z'/%3E%3Crect x='1' y='4' width='1' height='1' fill='%23FF8FB8'/%3E%3Crect x='7' y='4' width='1' height='1' fill='%23FF8FB8'/%3E%3Ccircle cx='3.2' cy='3.4' r='.55' fill='%232B1D4E'/%3E%3Ccircle cx='5.8' cy='3.4' r='.55' fill='%232B1D4E'/%3E%3C/svg%3E">
+<style>
+:root {
+  --ground: #18171b;
+  --ink: #e8e3d7;           /* bone, the one ink */
+  --ink-2: #b3aea4;
+  --ink-3: #8a857d;
+  --line: rgba(232, 227, 215, .14);
+  --dotty: #B49CFF; --ring: #7456DD; --blush: #FF8FB8;
+  --paper: #e7e0d0; --paper-ink: #1e1b22; --paper-ink-2: #5d5850;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --hand: "Shantell Sans", "Segoe Print", "Comic Sans MS", cursive;
+  --noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .slip-wrap.in .slip, .slip-wrap.in .copy, .runs.in i { animation: none !important; } }
+body { margin: 0; background: var(--ground); color: var(--ink-2); font: 400 15px/1.75 var(--mono); overflow-x: hidden; }
+::selection { background: var(--dotty); color: var(--paper-ink); }
+h1, h2, h3, p, ul, ol, dl, dd, figure, pre { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px dashed var(--dotty); outline-offset: 3px; }
+
+/* print texture: grain over everything, edges burnt a little */
+.grain, .burn { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+.grain { background: var(--noise); opacity: .2; mix-blend-mode: screen; }
+.burn { background: radial-gradient(130% 95% at 50% 45%, transparent 58%, rgba(0, 0, 0, .55)); z-index: 59; }
+
+/* links: a row of dots under them, which march when you point at one */
+a { color: var(--ink); text-decoration: none; padding-bottom: 2px;
+    background: radial-gradient(circle, var(--ink-3) 1px, transparent 1.4px) 0 100% / 5px 4px repeat-x; }
+a:hover { color: var(--dotty); background-image: radial-gradient(circle, var(--dotty) 1.15px, transparent 1.55px); animation: march .5s linear infinite; }
+@keyframes march { to { background-position: 10px 100%; } }
+code { font-family: var(--mono); color: var(--ink); background: rgba(232, 227, 215, .07); padding: .05em .35em; border-radius: 3px; font-size: .95em; }
+.hand { font-family: var(--hand); color: var(--ink-2); line-height: 1.25; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+
+/* ---- top ---------------------------------------------------------------------------------------- */
+.top { position: absolute; top: 0; left: 0; right: 0; z-index: 5; }
+.top .wrap { display: flex; align-items: center; gap: 24px; height: 64px; max-width: 1280px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 500; background: none; padding: 0; }
+.brand svg { width: 18px; height: 18px; image-rendering: pixelated; }
+.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 13.5px; }
+.top nav a { color: var(--ink-2); }
+
+/* ---- hero --------------------------------------------------------------------------------------- */
+.hero { max-width: 1280px; margin: 0 auto; min-height: 100vh; min-height: 100svh; padding: 64px 32px 48px;
+        display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 24px; align-items: center; }
+.intro { max-width: 440px; }
+.intro h1 { font: 500 clamp(1.7rem, 2.7vw, 2.35rem)/1.22 var(--mono); color: var(--ink); letter-spacing: -.02em; margin-bottom: 26px; }
+.intro p { margin-bottom: 14px; }
+.ringed { position: relative; white-space: nowrap; }
+.ringed svg { position: absolute; left: -9px; top: -1px; width: calc(100% + 14px); height: calc(100% + 6px); fill: none; stroke: var(--dotty); stroke-width: 2; stroke-linecap: round; overflow: visible; }
+.intro .go { margin-top: 26px; display: flex; gap: 22px; flex-wrap: wrap; }
+.intro .go a { font-weight: 500; }
+
+.stage { position: relative; display: flex; flex-direction: column; align-items: center; padding: 6px 0 0; }
+#threads { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.server { position: relative; z-index: 1; width: 150px; text-align: center; font-size: 12px; color: var(--ink-3); padding-bottom: 6px;
+          background: radial-gradient(circle, var(--ink-3) 1px, transparent 1.4px) 0 100% / 6px 4px repeat-x; }
+.face { position: relative; z-index: 1; width: min(520px, 100%); margin-top: 96px; }
+.face canvas { display: block; width: 100%; aspect-ratio: 56 / 34; transition: opacity .5s; }
+.caption { text-align: center; font-size: 13px; line-height: 1.65; font-variant-numeric: tabular-nums; min-height: 6.6em; transition: opacity .5s; }
+.caption div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.caption .name { color: var(--dotty); }
+.caption .keys { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+.away canvas, .away .caption { opacity: .06; }
+.gone { position: absolute; left: 0; right: 0; top: 34%; text-align: center; z-index: 2; }
+.gone p { font-size: 19px; margin-bottom: 10px; }
+.gone button { cursor: pointer; background: none; border: 1px dashed var(--ink-3); color: var(--ink); padding: 4px 12px; font: 500 13px var(--mono); }
+.gone button:hover { border-color: var(--dotty); color: var(--dotty); }
+
+.agent { position: relative; z-index: 1; width: min(560px, 100%); margin-top: 10px; font-size: 12.5px; line-height: 1.6; }
+.agent .cmd { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-3); }
+.agent .cmd span:first-child { overflow-wrap: anywhere; }
+.agent .cmd b { font-weight: 500; color: var(--ink-2); white-space: nowrap; }
+.reply { min-height: 6.6em; color: var(--ink); overflow-wrap: anywhere; padding-top: 4px; }
+.reply .wait { color: var(--ink-3); font-style: italic; }
+.k { color: var(--ink-3); } .s { color: var(--ink); } .n, .b { color: var(--dotty); } .f { color: var(--blush); }
+
+.server-is { position: relative; z-index: 1; width: min(560px, 100%); display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline; font-size: 12.5px; margin-top: 8px; }
+.server-is > span { color: var(--ink-3); }
+.pick { cursor: pointer; background: none; border: 0; padding: 0; color: var(--ink-2); }
+.pick::before { content: "○ "; color: var(--ink-3); }
+.pick[aria-pressed="true"] { color: var(--ink); }
+.pick[aria-pressed="true"]::before { content: "● "; color: var(--dotty); }
+.pick:hover { color: var(--dotty); }
+.try { position: relative; z-index: 1; width: min(560px, 100%); font-size: 17px; color: var(--ink-3); margin-top: 14px; }
+
+/* notes in the margins, with arrows drawn by hand */
+.note { position: absolute; z-index: 2; font-family: var(--hand); font-size: 17px; line-height: 1.25; color: var(--ink-2); }
+.note svg { position: absolute; fill: none; stroke: var(--ink-3); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.note-dotty { left: calc(100% + 6px); top: 26%; width: 160px; }
+.note-dotty svg { left: -58px; top: 30px; width: 62px; height: 34px; }
+.note-threads { right: calc(50% + 120px); top: 50px; width: 150px; text-align: right; }
+.note-threads svg { right: -64px; top: 22px; width: 60px; height: 40px; }
+.note-agent { left: calc(100% + 14px); top: 8px; width: 120px; }
+.note-agent svg { left: -50px; top: 18px; width: 48px; height: 26px; }
+.only-small { display: none; }
+
+/* ---- sections ----------------------------------------------------------------------------------- */
+.sec { padding: 96px 0 24px; }
+.sec .wrap { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 36px; }
+.sec-head { align-self: start; position: sticky; top: 36px; }
+.sec-head h2 { font: 500 36px/1.05 var(--hand); color: var(--ink); margin-bottom: 10px; }
+.sec-head p { font-size: 13px; line-height: 1.6; color: var(--ink-3); }
+.body { min-width: 0; max-width: 780px; }
+.dots-rule { height: 4px; margin: 0 auto; max-width: 1216px; background: radial-gradient(circle, var(--ink-3) 1px, transparent 1.4px) 0 0 / 9px 4px repeat-x; opacity: .7; }
+
+/* install: two receipts */
+.slips { display: grid; grid-template-columns: minmax(0, 1fr); gap: 30px; }
+.slip-wrap { filter: drop-shadow(0 16px 22px rgba(0, 0, 0, .45)); }
+.slip-wrap:nth-child(1) { transform: rotate(-.45deg); }
+.slip-wrap:nth-child(2) { transform: rotate(.35deg); }
+.slip { --t: 7px; position: relative; background: var(--paper); color: var(--paper-ink); padding: 30px 28px 28px; font-size: 13.5px; line-height: 1.6;
+  -webkit-mask: conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / calc(2 * var(--t)) 51% repeat-x,
+                conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(2 * var(--t)) 51% repeat-x;
+          mask: conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / calc(2 * var(--t)) 51% repeat-x,
+                conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(2 * var(--t)) 51% repeat-x; }
+.slip::before { content: ""; position: absolute; inset: 0; background: var(--noise); mix-blend-mode: multiply; opacity: .32; pointer-events: none; }
+.slip h3 { font: 600 12px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; display: flex; justify-content: space-between; gap: 12px; }
+.slip h3 span:last-child { color: var(--paper-ink-2); font-weight: 500; letter-spacing: .06em; }
+.slip .what { color: var(--paper-ink-2); margin: 10px 0 14px; }
+.slip .cut { border-top: 1.5px dashed rgba(30, 27, 34, .35); margin: 14px 0 12px; }
+.slip .say { color: var(--paper-ink-2); }
+.slip .row { display: flex; align-items: center; gap: 14px; padding: 3px 0; }
+.slip .row code { flex: 1; min-width: 0; background: none; color: var(--paper-ink); padding: 0; font-size: inherit; font-weight: 500; white-space: pre; overflow-x: auto; scrollbar-width: none; }
+.copy { flex: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; background: var(--paper-ink); color: var(--paper); border: 0; border-radius: 4px;
+        font: 600 12.5px/1 var(--mono); padding: 9px 14px 9px 11px; box-shadow: 3px 3px 0 var(--ring); transition: transform .1s, box-shadow .1s, background .15s; }
+.copy svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.row:hover .copy, .copy:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ring); }
+.copy:hover { background: var(--ring); color: #fff; }
+.copy:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ring); }
+.copy.done { background: var(--dotty); color: var(--paper-ink); }
+/* a receipt prints when it scrolls in, then its copy buttons stamp down, one by one */
+.js .slip-wrap:not(.in) .slip { clip-path: inset(0 0 100% 0); }
+.js .slip-wrap:not(.in) .copy { opacity: 0; }
+.slip-wrap.in .slip { animation: print .8s cubic-bezier(.3, .7, .3, 1) both; }
+.slip-wrap.in .copy:not(.landed) { animation: stamp .5s cubic-bezier(.2, 1.5, .4, 1) both, ping 1.1s ease-out forwards;
+                                   animation-delay: calc(.6s + var(--i) * .15s), calc(1.05s + var(--i) * .15s); }
+@keyframes print { from { clip-path: inset(0 0 100% 0); transform: translateY(-16px); } to { clip-path: inset(0 0 0 0); transform: none; } }
+@keyframes stamp { from { opacity: 0; transform: scale(1.8) rotate(-14deg); box-shadow: 0 0 0 var(--ring); } to { opacity: 1; transform: none; box-shadow: 3px 3px 0 var(--ring); } }
+@keyframes ping { from { outline: 2px solid rgba(180, 156, 255, .9); outline-offset: 0; } to { outline: 2px solid rgba(180, 156, 255, 0); outline-offset: 12px; } }
+.fine { font-size: 13px; color: var(--ink-3); margin-top: 26px; }
+
+/* how it works */
+.flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 42px; }
+.flow li { position: relative; }
+.flow li + li > svg { position: absolute; left: -44px; top: 2px; width: 40px; height: 26px; fill: none; stroke: var(--ink-3); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.flow b { display: block; font: 500 22px/1.2 var(--hand); color: var(--ink); margin-bottom: 4px; }
+.flow h3 { font: 500 13.5px/1.5 var(--mono); color: var(--ink); margin-bottom: 8px; }
+.flow p { font-size: 13.5px; line-height: 1.7; }
+.never { position: relative; display: inline-block; font: 500 24px/1.2 var(--hand); color: var(--ink); margin: 46px 0 34px; }
+.never svg { position: absolute; left: -4px; right: -4px; bottom: -12px; width: calc(100% + 8px); height: 12px; fill: none; stroke: var(--dotty); stroke-width: 2.2; stroke-linecap: round; }
+.print { font-size: 12.5px; line-height: 1.7; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px 0 4px 18px;
+         background: radial-gradient(circle, var(--ink-3) 1px, transparent 1.4px) 0 0 / 4px 6px repeat-y; }
+.print .p { color: var(--ink-3); }
+.exits { display: grid; grid-template-columns: repeat(4, max-content); gap: 6px 28px; font-size: 13px; margin: 22px 0 0; }
+.exits div { display: flex; gap: 10px; }
+.exits dt { color: var(--dotty); font-weight: 500; }
+.shot { position: relative; margin-top: 56px; }
+.shot .plate { position: relative; }
+.shot .plate::before { content: ""; position: absolute; inset: 0; transform: translate(9px, 9px); background: var(--ring); opacity: .55; }
+.shot img { position: relative; display: block; width: 100%; height: auto; border: 1.5px solid var(--ink); }
+.shot figcaption { font-size: 18px; margin-top: 18px; max-width: 560px; }
+
+/* dotty: its faces, each beside what it means */
+.dotty-lead { font-size: 20px; max-width: 600px; }
+.faces { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; margin-top: 30px; }
+.faces li { display: flex; flex-direction: column; gap: 4px; }
+.faces canvas { width: 84px; height: 84px; margin-bottom: 10px; }
+.faces b { font: 500 21px/1.1 var(--hand); color: var(--ink); }
+.faces span { font-size: 12.5px; line-height: 1.55; }
+
+/* keys */
+.keys-list { display: grid; gap: 18px; }
+.keys-list > div { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 20px; align-items: center; }
+.cap { display: inline-grid; place-items: center; min-width: 54px; height: 50px; padding: 0 14px; color: var(--ink); font: 500 14px/1 var(--mono);
+       border: 1.5px solid var(--ink-2); border-bottom-width: 5px; border-radius: 10px 12px 9px 11px; transition: transform .08s, border-bottom-width .08s, color .08s; }
+.cap + .cap { margin-left: 6px; }
+.cap.down { transform: translateY(3px); border-bottom-width: 2px; color: var(--dotty); border-color: var(--dotty); }
+.keys-list p { font-size: 14px; }
+.keys-try { font-size: 19px; margin-top: 30px; }
+
+/* commands: like a menu, dots to the price */
+.menu { font-size: 13.5px; }
+.menu h3 { font: 500 20px/1 var(--hand); color: var(--ink-3); margin: 28px 0 10px; }
+.menu h3:first-child { margin-top: 0; }
+.menu dl > div { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
+.menu dt { color: var(--ink); white-space: nowrap; }
+.menu dl > div::before { content: ""; order: 1; flex: 1 1 20px; min-width: 20px; height: 4px; align-self: center; transform: translateY(2px);
+                    background: radial-gradient(circle, var(--ink-3) .9px, transparent 1.3px) 0 0 / 7px 4px repeat-x; opacity: .8; }
+.menu dd { order: 2; text-align: right; }
+
+/* tested: every run, and the slow-server race */
+.score { display: grid; grid-template-columns: repeat(3, max-content); gap: 10px 56px; margin-bottom: 40px; }
+.score b { display: block; font: 500 46px/1 var(--hand); color: var(--ink); }
+.score b small { font-size: 24px; color: var(--ink-3); }
+.score div:first-child b { color: var(--dotty); }
+.score span { font-size: 12.5px; }
+.runs { width: 100%; border-collapse: collapse; font-size: 13px; }
+.runs caption { text-align: left; font: 500 20px/1.2 var(--hand); color: var(--ink-2); padding-bottom: 12px; }
+.runs th, .runs td { text-align: left; padding: 9px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.runs thead th { font-weight: 500; color: var(--ink-3); font-size: 12px; border-top: 0; padding-top: 0; }
+.runs tbody th { font-weight: 400; color: var(--ink-2); padding-right: 18px; }
+.runs td, .runs thead th + th { width: 128px; white-space: nowrap; }
+.runs i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; background: var(--ink); font-style: normal; vertical-align: middle; }
+.runs .c-idm i { background: var(--dotty); }
+.runs i.miss { width: auto; height: auto; border-radius: 0; background: none; color: var(--blush); font: 600 15px/10px var(--mono); }
+.runs tr.why td { border-top: 0; padding: 0 0 12px; white-space: normal; }
+.runs tr.why span { font-size: 17px; color: var(--blush); }
+.js .runs:not(.in) i { opacity: 0; }
+.runs.in i { animation: pop .35s cubic-bezier(.2, 1.6, .4, 1) both; animation-delay: calc(var(--d) * 22ms); }
+@keyframes pop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: none; } }
+.race { margin-top: 54px; }
+.race h3 { font: 500 20px/1.2 var(--hand); color: var(--ink-2); margin-bottom: 16px; }
+.lane { display: grid; grid-template-columns: 56px minmax(0, 1fr) 64px; gap: 14px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+.lane .who { color: var(--ink); }
+.lane .track { height: 12px; }
+.lane .bar { height: 100%; width: 0; background: var(--ink-3); border-radius: 0 4px 4px 0; }
+.lane .bar.idm { background: var(--dotty); }
+.lane .t { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.race p { font-size: 18px; margin-top: 10px; }
+.checks { margin-top: 44px; font-size: 14px; }
+.checks b { font: 500 30px/1 var(--hand); color: var(--ink); margin-right: 8px; }
+
+/* about */
+.about p { font-size: 15px; margin-bottom: 14px; max-width: 600px; }
+.about p:first-child { font: 500 22px/1.4 var(--hand); color: var(--ink); }
+.about .go { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 26px; }
+.about .go a { background: none; border: 1.5px solid var(--ink-2); border-radius: 4px; padding: 11px 18px; font: 500 14px/1 var(--mono); color: var(--ink);
+               box-shadow: 3px 3px 0 var(--ring); transition: transform .1s, box-shadow .1s, background .15s, color .15s; }
+.about .go a.main { background: var(--dotty); border-color: var(--dotty); color: var(--paper-ink); }
+.about .go a:hover { animation: none; background: var(--ring); border-color: var(--ring); color: #fff; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--dotty); }
+
+footer { margin-top: 110px; padding: 28px 0 60px; font-size: 12px; color: var(--ink-3); }
+footer .wrap { display: flex; justify-content: space-between; gap: 12px 32px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 24px; }
+
+/* this page, as a download: it fills while you read */
+.page-ring { position: fixed; right: 18px; bottom: 16px; z-index: 40; display: flex; align-items: center; gap: 8px; cursor: pointer;
+             background: rgba(24, 23, 27, .78); border: 0; border-radius: 999px; padding: 6px 8px 6px 12px; font: 500 11.5px var(--mono); color: var(--ink-3);
+             opacity: 0; transform: translateY(8px); transition: opacity .3s, transform .3s; pointer-events: none; }
+.page-ring.on { opacity: 1; transform: none; pointer-events: auto; }
+.page-ring svg { width: 34px; height: 34px; }
+.page-ring circle { fill: var(--ink-3); opacity: .45; transition: fill .2s, opacity .2s; }
+.page-ring circle.in { fill: var(--dotty); opacity: 1; }
+.page-ring:hover { color: var(--ink); }
+
+@media (hover: none) and (pointer: coarse) { .try, .keys-try { display: none; } }
+@media (min-width: 1240px) { .note { display: block; } }
+@media (max-width: 1239px) { .note { display: none; } }
+@media (max-width: 920px) {
+  .wrap, .top .wrap { padding: 0 20px; }
+  .top nav a:not(.keep) { display: none; }
+  .hero { grid-template-columns: minmax(0, 1fr); padding: 92px 20px 40px; gap: 40px; min-height: 0; }
+  .intro { max-width: none; }
+  .face { margin-top: 84px; }
+  .only-small { display: block; font-size: 17px; text-align: center; margin: -2px 0 10px; }
+  .sec { padding-top: 72px; }
+  .sec .wrap { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .sec-head { position: static; }
+  .flow { grid-template-columns: minmax(0, 1fr); gap: 30px; }
+  .flow li + li > svg { display: none; }
+  .exits { grid-template-columns: minmax(0, 1fr); }
+  .keys-list > div { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .menu dl > div { flex-wrap: wrap; gap: 0 10px; }
+  .menu dl > div::before { display: none; }
+  .menu dt { white-space: normal; overflow-wrap: anywhere; }
+  .menu dd { text-align: left; flex-basis: 100%; color: var(--ink-3); margin-bottom: 6px; }
+  .faces { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .faces li { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 16px; align-items: center; }
+  .faces canvas { width: 64px; height: 64px; grid-row: span 2; margin: 0; }
+  .score { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; }
+  .score b { font-size: 34px; }
+  .runs td, .runs thead th + th { width: 84px; }
+  .runs i { width: 8px; height: 8px; margin-right: 4px; }
+  .lane { grid-template-columns: 44px minmax(0, 1fr) 52px; gap: 10px; }
+  .slip { padding: 26px 18px 24px; font-size: 12.5px; }
+  .slip h3 { flex-direction: column; gap: 6px; line-height: 1.3; }
+  .slip .row code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .page-ring { padding: 3px; right: 12px; bottom: 12px; }
+  .page-ring span { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<div class="burn" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="IDM for Agents, top of the page">
+      <svg viewBox="0 0 9 9" aria-hidden="true"><path fill="#B49CFF" d="M2 0h5v1h1v1h1v5h-1v1h-1v1h-5v-1h-1v-1h-1v-5h1v-1h1z"/><rect x="1" y="4" width="1" height="1" fill="#FF8FB8"/><rect x="7" y="4" width="1" height="1" fill="#FF8FB8"/><circle cx="3.2" cy="3.4" r=".55" fill="#2B1D4E"/><circle cx="5.8" cy="3.4" r=".55" fill="#2B1D4E"/></svg>
+      idm for agents
+    </a>
+    <nav aria-label="Sections">
+      <a class="keep" href="#install">install</a><a href="#how">how it works</a><a href="#dotty">dotty</a><a href="#keys">keys</a><a href="#commands">commands</a><a href="#tested">tested</a><a href="#about">about</a><a class="keep" href="https://github.com/Ajinkya259/IDM-for-Agents">github ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="intro">
+    <h1>a download manager for <span class="ringed">ai agents<svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M150 6 C 96 -2, 24 4, 8 24 C -6 44, 52 58, 112 55 C 170 52, 204 40, 194 20 C 186 6, 150 2, 116 5"/></svg></span>.</h1>
+    <p>the agent runs <code>idm get URL</code> and gets one line of json back: the file's path, or an error code and the command to run next.</p>
+    <p>it takes file links, share links (google drive, dropbox, onedrive, github, hugging face) and videos (youtube, instagram, tiktok and more).</p>
+    <p>python 3.9+. on 3.11+ it brings its own video tools.</p>
+    <p class="go"><a href="#install">install it</a><a href="#how">how it works</a><a href="https://github.com/Ajinkya259/IDM-for-Agents">source ↗</a></p>
+  </div>
+
+
+  <div class="stage" id="stage">
+    <canvas id="threads" aria-hidden="true"></canvas>
+    <div class="server" id="server">example.com</div>
+    <div class="note note-threads">one thread per connection. 8 by default, up to 16.
+      <svg viewBox="0 0 60 40" aria-hidden="true"><path d="M4 6 C 22 4, 40 12, 52 30"/><path d="M52 30 L 50 20 M52 30 L 43 26"/></svg>
+    </div>
+
+    <div class="face" id="face">
+      <canvas id="dotty-face" role="img" aria-label="dotty: a lavender pixel face inside a ring of 32 dots. As the file arrives the dots fly home one by one, the face shows the percent, and it cheers at 100%."></canvas>
+      <p class="only-small hand">this is dotty. each dot is 1/32 of the file.</p>
+      <div class="caption" aria-hidden="true">
+        <div class="name" id="cap0">&nbsp;</div>
+        <div id="cap1">&nbsp;</div>
+        <div id="cap2">&nbsp;</div>
+        <div class="keys" id="cap3">&nbsp;</div>
+      </div>
+      <div class="gone" id="gone" hidden>
+        <p class="hand">you stopped watching.<br>the download carries on.</p>
+        <button id="rewatch">idm watch</button>
+      </div>
+      <div class="note note-dotty">this is dotty. each dot is 1/32 of the file.
+        <svg viewBox="0 0 62 34" aria-hidden="true"><path d="M58 4 C 44 2, 22 8, 8 24"/><path d="M8 24 L 10 14 M8 24 L 17 21"/></svg>
+      </div>
+    </div>
+
+    <div class="agent">
+      <div class="cmd"><span id="cmd">$ idm get https://example.com/files/100Mb.dat</span><b id="exit"></b></div>
+      <div class="reply" id="reply"><span class="wait">waiting for one line of json…</span></div>
+      <div class="note note-agent">all the agent reads
+        <svg viewBox="0 0 48 26" aria-hidden="true"><path d="M44 4 C 32 4, 16 10, 6 20"/><path d="M6 20 L 9 11 M6 20 L 15 19"/></svg>
+      </div>
+    </div>
+
+    <div class="server-is" role="group" aria-label="Pick what the server does">
+      <span>the server</span>
+      <button class="pick" data-s="0" aria-pressed="true">answers</button>
+      <button class="pick" data-s="1" aria-pressed="false">is busy (429)</button>
+      <button class="pick" data-s="2" aria-pressed="false">goes quiet</button>
+      <button class="pick" data-s="3" aria-pressed="false">is gone (404)</button>
+    </div>
+    <p class="try hand" id="try">press space to pause it. p, r and q work too.</p>
+  </div>
+</section>
+
+<div class="dots-rule" aria-hidden="true"></div>
+
+<section class="sec" id="install">
+  <div class="wrap">
+    <div class="sec-head"><h2>install</h2><p>as a claude code plugin, or as a command for any agent.</p></div>
+    <div class="body">
+      <div class="slips">
+        <div class="slip-wrap"><div class="slip">
+          <h3><span>claude code plugin</span><span>idm + skill + dotty</span></h3>
+          <p class="what">the idm command, a skill that tells claude when to use it, and dotty under each download. for videos, add the command line install too: claude code then runs that one.</p>
+          <div class="say"># inside claude code, one at a time</div>
+          <div class="row"><code>/plugin marketplace add Ajinkya259/IDM-for-Agents</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+          <div class="row"><code>/plugin install idm-for-agents@idm-for-agents</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+          <div class="cut"></div>
+          <div class="say"># or from a terminal</div>
+          <div class="row"><code>claude plugin install idm-for-agents --marketplace Ajinkya259/IDM-for-Agents</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+        </div></div>
+        <div class="slip-wrap"><div class="slip">
+          <h3><span>command line</span><span>idm + video tools</span></h3>
+          <p class="what">the idm command, for any agent or terminal. on python 3.11+ it brings yt-dlp, ffmpeg and deno too, so videos work with nothing else.</p>
+          <div class="row"><code>pipx install git+https://github.com/Ajinkya259/IDM-for-Agents</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+          <div class="say"># or with uv</div>
+          <div class="row"><code>uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+          <div class="cut"></div>
+          <div class="say"># sites change; to update yt-dlp</div>
+          <div class="row"><code>pipx runpip idm-for-agents install -U yt-dlp</code><button class="copy"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><path d="M8.5 2.5 V1.5 H1.5 V8.5 H2.5"/></svg><span>copy</span></button></div>
+        </div></div>
+      </div>
+      <p class="fine">open source, mit license. the code is on <a href="https://github.com/Ajinkya259/IDM-for-Agents">github</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="how">
+  <div class="wrap">
+    <div class="sec-head"><h2>how it works</h2><p>from a link to a file, in three steps.</p></div>
+    <div class="body">
+      <ol class="flow">
+        <li>
+          <b>1. a link</b>
+          <h3>the agent runs idm get URL</h3>
+          <p>a share link is turned into the file's own link first. a video goes through yt-dlp.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 40 26" aria-hidden="true"><path d="M3 15 C 12 5, 24 22, 35 12"/><path d="M35 12 L 26 9 M35 12 L 30 20"/></svg>
+          <b>2. idm</b>
+          <h3>it downloads in the background</h3>
+          <p>up to 16 connections (8 by default). it resumes after any stop, and checks every piece against the file's etag, so a file that changes mid-download fails with FILE_CHANGED instead of being saved as a mix.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 40 26" aria-hidden="true"><path d="M3 15 C 12 5, 24 22, 35 12"/><path d="M35 12 L 26 9 M35 12 L 30 20"/></svg>
+          <b>3. one line of json</b>
+          <h3>within 90 seconds, the agent gets</h3>
+          <p>done: the file's path.<br>still going: <code>next</code> is <code>idm wait ID</code>.<br>failed: one of 18 error codes, a <code>hint</code>, and in <code>next</code> the command to run.</p>
+        </li>
+      </ol>
+
+      <p class="never">an error page is never saved as the file.<svg viewBox="0 0 300 12" preserveAspectRatio="none" aria-hidden="true"><path d="M3 8 C 50 3, 100 10, 150 6 S 250 4, 297 7"/></svg></p>
+
+<pre class="print"><span class="p">$ idm get https://example.com/big.iso</span>
+{<span class="k">"ok"</span>: <span class="b">true</span>, <span class="k">"job"</span>: "3f9a1c", <span class="k">"state"</span>: "downloading", <span class="k">"percent"</span>: <span class="n">7</span>, <span class="k">"eta"</span>: <span class="n">158</span>, <span class="k">"next"</span>: "idm wait 3f9a1c"}
+
+<span class="p">$ idm get https://example.com/members/report.pdf</span>
+{<span class="k">"ok"</span>: <span class="f">false</span>, <span class="k">"job"</span>: "77b0e2", <span class="k">"state"</span>: "failed",
+ <span class="k">"error"</span>: {<span class="k">"code"</span>: "AUTH_REQUIRED", <span class="k">"message"</span>: "the server said 403 Forbidden", <span class="k">"retryable"</span>: <span class="f">false</span>, <span class="k">"hint"</span>: "..."},
+ <span class="k">"next"</span>: "idm get https://example.com/members/report.pdf -d /Users/you --cookies &lt;cookies.txt&gt;"}</pre>
+
+      <dl class="exits" aria-label="Exit codes">
+        <div><dt>0</dt><dd>fine</dd></div>
+        <div><dt>1</dt><dd>failed</dd></div>
+        <div><dt>2</dt><dd>a bad command</dd></div>
+        <div><dt>3</dt><dd>failed, worth retrying: run <code>next</code></dd></div>
+      </dl>
+
+      <figure class="shot">
+        <div class="plate"><img src="assets/dotty-in-claude-code.gif" width="1116" height="810" loading="lazy" decoding="async" alt="A Claude Code session. The user says: download this. The agent runs idm get; dotty fills its ring under the command, then the agent gets one line of JSON and says where the file is."></div>
+        <figcaption class="hand">a real claude code session. dotty sits under the command; the agent reads only the json.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="dotty">
+  <div class="wrap">
+    <div class="sec-head"><h2>dotty</h2><p>the face you watch while a download runs: in your terminal, and under the agent's command in claude code.</p></div>
+    <div class="body">
+      <p class="dotty-lead hand">32 dots float around it. each one is 1/32 of the file, and flies home when its share arrives. the face says how it's going.</p>
+      <ul class="faces" id="faces">
+        <li data-mood="look"><canvas aria-hidden="true"></canvas><b>starting</b><span>looking for the file</span></li>
+        <li data-mood="happy"><canvas aria-hidden="true"></canvas><b>downloading</b><span>the file is coming in</span></li>
+        <li data-mood="blink"><canvas aria-hidden="true"></canvas><b>paused</b><span>asleep till you resume</span></li>
+        <li data-mood="sad"><canvas aria-hidden="true"></canvas><b>trouble</b><span>the server pushed back: it retries, or it failed</span></li>
+        <li data-mood="joy"><canvas aria-hidden="true"></canvas><b>done</b><span>the file is saved</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="keys">
+  <div class="wrap">
+    <div class="sec-head"><h2>keys</h2><p>while <code>idm get</code>, <code>idm wait</code> or <code>idm watch</code> shows a download in your terminal. not when an agent runs idm.</p></div>
+    <div class="body">
+      <div class="keys-list">
+        <div><span><kbd class="cap" data-key=" ">space</kbd></span><p>pause, or resume</p></div>
+        <div><span><kbd class="cap" data-key="p">p</kbd></span><p>pause</p></div>
+        <div><span><kbd class="cap" data-key="r">r</kbd></span><p>resume</p></div>
+        <div><span><kbd class="cap" data-key="q">q</kbd></span><p>stop watching. the download keeps going in the background.</p></div>
+        <div><span><kbd class="cap" data-key="Control">ctrl</kbd><kbd class="cap" data-key="c">c</kbd></span><p>in <code>idm get</code>: pause the download. in <code>idm wait</code> or <code>idm watch</code>: stop watching.</p></div>
+      </div>
+      <p class="keys-try hand">they work on dotty at the top of this page too.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="commands">
+  <div class="wrap">
+    <div class="sec-head"><h2>commands</h2><p>each one replies with one line of json when an agent runs it.</p></div>
+    <div class="body">
+      <div class="menu">
+        <h3>download</h3>
+        <dl>
+        <div><dt>idm get URL [-d FOLDER]</dt><dd>download and wait (replies within 90 s)</dd></div>
+        <div><dt>idm get URL --audio</dt><dd>a video's sound only</dd></div>
+        <div><dt>idm start URL</dt><dd>start in the background, reply at once</dd></div>
+        <div><dt>idm start URL --at 02:00</dt><dd>start at 2 am (or --in 2h)</dd></div>
+        <div><dt>idm start URL --after ID</dt><dd>start when that download ends</dd></div>
+        <div><dt>idm start URL --limit 2M</dt><dd>at most 2 MB/s</dd></div>
+        </dl>
+        <h3>manage</h3>
+        <dl>
+        <div><dt>idm wait | status ID</dt><dd>wait for it, or check on it</dd></div>
+        <div><dt>idm pause | resume | cancel ID</dt><dd>stop, carry on, or drop it</dd></div>
+        <div><dt>idm limit ID SPEED</dt><dd>change the speed limit while it runs (0: none)</dd></div>
+        <div><dt>idm watch [ID]</dt><dd>show dotty (no ID: every download)</dd></div>
+        <div><dt>idm list</dt><dd>the latest 20 downloads</dd></div>
+        </dl>
+        <h3>options for get and start</h3>
+        <dl>
+        <div><dt>--cookies FILE</dt><dd>send browser cookies, for a site that needs a login</dd></div>
+        <div><dt>--header 'NAME: VALUE'</dt><dd>send an extra request header</dd></div>
+        <div><dt>-o NAME</dt><dd>save under this file name</dd></div>
+        <div><dt>--connections N</dt><dd>use 1 to 16 connections</dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="tested">
+  <div class="wrap">
+    <div class="sec-head"><h2>tested</h2><p>real claude code agents (sonnet), each in an empty folder, asked to download a link while a local server misbehaves on purpose. a program checks the file on disk, byte for byte. 5 runs of each, with idm and with plain tools.</p></div>
+    <div class="body">
+      <div class="score">
+        <div><b>35<small>/35</small></b><span>runs ended right, with idm</span></div>
+        <div><b>33<small>/35</small></b><span>with curl, wget…</span></div>
+        <div><b>1.8&times;</b><span>faster from a slow server</span></div>
+      </div>
+      <table class="runs" id="runs">
+        <caption>every run</caption>
+        <thead><tr><th scope="col">what goes wrong</th><th scope="col">idm</th><th scope="col">curl, wget…</th></tr></thead>
+        <tbody id="runs-body"></tbody>
+      </table>
+      <div class="race" id="race" role="img" aria-label="10 MB from a slow server: 113 seconds with idm, 206 seconds with curl">
+        <h3>10 MB from a slow server that allows 2 connections</h3>
+        <div class="lane" aria-hidden="true"><span class="who">idm</span><div class="track"><div class="bar idm" title="idm: 113 s (median of 5)"></div></div><span class="t">113 s</span></div>
+        <div class="lane" aria-hidden="true"><span class="who">curl</span><div class="track"><div class="bar" title="curl: 206 s (median of 5)"></div></div><span class="t">206 s</span></div>
+        <p class="hand">idm opens both connections the server allows. curl opens one.</p>
+      </div>
+      <p class="checks"><b>186</b>checks in <code>tests/run_tests.py</code>, on python 3.9 and 3.14.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="about">
+  <div class="wrap">
+    <div class="sec-head"><h2>about</h2><p>who made this.</p></div>
+    <div class="body about">
+      <p>hi, i'm <a href="https://ajinkya.site">ajinkya</a>.</p>
+      <p>i build ai products: voice agents, retrieval, and the evals that check them.</p>
+      <p class="go"><a class="main" href="https://ajinkya.site">ajinkya.site ↗</a><a href="https://github.com/Ajinkya259">github ↗</a></p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>idm for agents · mit license · <a href="https://github.com/Ajinkya259/IDM-for-Agents">github</a></span>
+    <span>not affiliated with internet download manager (idm) or tonec inc.</span>
+  </div>
+</footer>
+
+<button class="page-ring" id="page-ring" aria-label="Back to the top">
+  <span id="page-pct">this page 0%</span>
+  <svg viewBox="0 0 34 34" aria-hidden="true"></svg>
+</button>
+
+<script>
+(() => {
+"use strict";
+
+// ---- dotty, ported from idm/dotty.py -----------------------------------------------------------
+const FACE = "#B49CFF", RING = "#7456DD", INK = "#2B1D4E", BLUSH = "#FF8FB8", FLOATING = "#CDBDF5";
+const W = 28, H = 17, CX = 14, CY = 8, COLUMNS = 2 * W;
+const DOTS = 32, RADIUS = 15, FLY = 0.8;
+const BIG = 0.42, SMALL = 0.19;        // "●" and "•", as a share of a column's width
+const MONO = '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+// Where the dots float until their share arrives: dotty.scatter(random.Random(11)), exactly.
+const LOOSE = [[49.983,15.435,3.191,3.691],[10.787,16.869,3.958,4.982],[5.989,10.405,0.57,5.087],[37.752,2.298,6.171,6.062],[9.347,1.465,3.32,0.374],[11.081,8.5,0.189,2.915],[53.876,31.866,5.279,4.447],[17.71,8.12,1.816,0.441],[45.869,12.982,6.02,5.324],[1.029,7.501,5.719,2.953],[4.871,20.513,4.892,1.695],[52.096,24.499,0.741,1.548],[43.242,6.508,3.514,2.811],[11.106,23.689,0.823,4.045],[17.12,28.431,1.324,2.477],[46.282,20.897,0.63,6.216],[16.705,3.275,0.566,3.661],[40.189,30.153,1.235,5.97],[23.337,4.219,0.243,6.049],[49.62,7.323,0.104,1.691],[1.948,29.217,4.404,6.049],[48.744,28.004,2.621,4.967],[47.26,2.286,4.452,3.585],[1.571,15.638,4.487,1.125],[12.305,28.899,6.161,6.141],[16.379,23.594,4.014,3.285],[33.077,1.86,6.091,3.242],[15.268,15.668,0.798,2.725],[42.302,1.706,1.22,1.428],[45.531,31.699,5.824,0.598],[28.166,1.478,5.612,5.037],[40.455,25.118,5.119,2.549]];
+// How it feels: (eyes, mouth), as in dotty.MOODS: ● ◡ / - ◡ / ● o / ╥ ⌒ / ^ ▽
+const MOODS = { happy: ["dot", "smile"], blink: ["dash", "smile"], look: ["dot", "o"], sad: ["tee", "frown"], joy: ["caret", "tri"] };
+
+const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+const rgb = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+function mix(a, b, t) { const A = rgb(a), B = rgb(b); return "rgb(" + A.map((v, i) => Math.round(v * (1 - t) + B[i] * t)).join(",") + ")"; }
+function drift(s, t) { return [clamp(s[0] + 2.2 * Math.sin(t * 0.6 + s[2]), 0, 2 * W - 1), clamp(s[1] + 1.6 * Math.sin(t * 0.8 + s[3]), 0, 2 * H - 1)]; }
+function home(i) { const a = i * 2 * Math.PI / DOTS; return [2 * CX + 1 + RADIUS * Math.sin(a), 2 * CY + 1 - RADIUS * Math.cos(a)]; }
+function fraction(st) { return st.size ? Math.min(1, (st.bytes || 0) / st.size) : 0; }
+function mb(n) { return ((n || 0) / 1e6).toFixed(1) + " MB"; }
+function howLong(s) {
+  let left = Math.max(0, Math.floor(s)); const words = [];
+  for (const [name, unit] of [["d", 86400], ["h", 3600], ["m", 60], ["s", 1]]) {
+    const n = Math.floor(left / unit); left -= n * unit; if (n) words.push(n + name);
+  }
+  return words.slice(0, 2).join(" ") || "0s";
+}
+
+function mood(st, t) {
+  const s = st.state;
+  if (s === "done") return "joy";
+  if (s === "failed" || s === "cancelled" || st.trouble) return "sad";
+  if (s === "paused") return "blink";
+  if (s !== "downloading" || !st.bytes) return "look";       // nothing has arrived yet
+  return t % 3.2 < 0.2 ? "blink" : "happy";                 // a blink every few seconds
+}
+function middleText(st) {
+  if (st.state === "done") return "100%";
+  if (st.size) return Math.floor(100 * fraction(st)) + "%";
+  return st.bytes ? (st.bytes / 1e6).toFixed(0) + "MB" : "…";
+}
+function caption(st) {
+  const name = (st.file || "").split("/").pop() || st.url || "";
+  const state = st.state, done = st.bytes || 0, size = st.size, error = st.error || {}, trouble = st.trouble;
+  let lines;
+  if (state === "done") lines = [`saved · ${mb(done)} in ${(st.finished - st.started).toFixed(1)}s`, "in ~/Downloads"];
+  else if (state === "failed") lines = [error.message || "failed", (error.hint || "").split(". ")[0]];
+  else if (state === "paused") lines = [size ? `paused at ${Math.floor(100 * fraction(st))}%` : `paused at ${mb(done)}`, `carry on: idm resume ${st.job}`];
+  else if ((state !== "downloading" || !done) && !trouble) lines = ["starting…", ""];
+  else {
+    const amount = size ? `${mb(done).slice(0, -3)} of ${mb(size)}` : mb(done);
+    const many = (st.connections || 1) > 1 ? ` · ${st.connections} connections` : "";
+    const left = st.eta != null ? `${st.eta}s left` : "";
+    const quiet = st.stalled ? `nothing for ${howLong(st.stalled)} · ` : "";
+    lines = [`${amount} · ${mb(st.speed)}/s${many}`,
+             trouble ? `${quiet}${trouble.message} · retrying in ${trouble.retry_in}s` : left];
+  }
+  return [name, ...lines];
+}
+// The keys a person watching in a terminal can press now, as idm's key_hint() says them.
+function keyHint(st) {
+  if (["scheduled", "queued", "downloading"].includes(st.state)) return "space pause · q stop watching (it carries on)";
+  if (st.state === "paused") return "space resume · q quit";
+  return "";
+}
+
+// The face, its eyes and mouth (drawn as thin strokes, like the characters), and the % under them.
+// gs makes the eyes and mouth bigger than a column, so a small face can still be read.
+function drawFace(ctx, cw, feeling, t, text, gs = 1) {
+  ctx.fillStyle = FACE;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+    if ((x - CX) ** 2 + (y - CY) ** 2 <= 4.6 ** 2) block(ctx, cw, x, y);
+  ctx.fillStyle = BLUSH;
+  block(ctx, cw, CX - 3, CY); block(ctx, cw, CX + 3, CY);
+  const [eyes, mouth] = MOODS[feeling];
+  const look = feeling === "look" ? [-1, 0, 1, 0][Math.floor(t * 1.6) % 4] : 0;
+  const eyeCol = 2 * CX + 1 - 3 + look;                      // "●    ●" written from here
+  glyph(ctx, cw * gs, eyes, (eyeCol + 0.5) * cw, (2 * (CY - 1) + 1) * cw);
+  glyph(ctx, cw * gs, eyes, (eyeCol + 5.5) * cw, (2 * (CY - 1) + 1) * cw);
+  glyph(ctx, cw * gs, mouth, (2 * CX + 0.5) * cw, (2 * CY + 1) * cw);
+  const start = Math.min(Math.max(0, 2 * CX + 1 - Math.floor((text.length + 1) / 2)), COLUMNS - text.length);
+  ctx.fillStyle = INK;
+  ctx.font = `700 ${1.62 * cw}px ${MONO}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, (start + text.length / 2) * cw, (2 * (CY + 2) + 1) * cw);
+}
+function block(ctx, cw, x, y) {          // a chunky pixel: two columns by one row, on whole pixels
+  const x0 = Math.round(2 * x * cw), y0 = Math.round(2 * y * cw);
+  ctx.fillRect(x0, y0, Math.round((2 * x + 2) * cw) - x0, Math.round((2 * y + 2) * cw) - y0);
+}
+function glyph(ctx, cw, kind, x, y) {
+  ctx.fillStyle = ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(1.2, 0.19 * cw); ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath();
+  switch (kind) {
+    case "dot":   ctx.arc(x, y, 0.4 * cw, 0, 2 * Math.PI); ctx.fill(); return;
+    case "dash":  ctx.moveTo(x - 0.34 * cw, y); ctx.lineTo(x + 0.34 * cw, y); break;
+    case "tee":   ctx.moveTo(x - 0.48 * cw, y - 0.2 * cw); ctx.lineTo(x + 0.48 * cw, y - 0.2 * cw);
+                  ctx.moveTo(x - 0.18 * cw, y - 0.2 * cw); ctx.lineTo(x - 0.18 * cw, y + 0.72 * cw);
+                  ctx.moveTo(x + 0.18 * cw, y - 0.2 * cw); ctx.lineTo(x + 0.18 * cw, y + 0.72 * cw); break;
+    case "caret": ctx.moveTo(x - 0.36 * cw, y + 0.14 * cw); ctx.lineTo(x, y - 0.34 * cw); ctx.lineTo(x + 0.36 * cw, y + 0.14 * cw); break;
+    case "smile": ctx.arc(x, y - 0.1 * cw, 0.3 * cw, 0.08 * Math.PI, 0.92 * Math.PI); break;
+    case "o":     ctx.arc(x, y + 0.12 * cw, 0.27 * cw, 0, 2 * Math.PI); break;
+    case "frown": ctx.arc(x, y + 0.34 * cw, 0.42 * cw, 1.17 * Math.PI, 1.83 * Math.PI); break;
+    case "tri":   ctx.moveTo(x - 0.36 * cw, y - 0.24 * cw); ctx.lineTo(x + 0.36 * cw, y - 0.24 * cw); ctx.lineTo(x, y + 0.36 * cw); ctx.closePath(); break;
+  }
+  ctx.stroke();
+}
+
+class Dotty {
+  // The face for one download. It remembers when each dot came in, so dots fly home once and stay.
+  constructor() { this.cameIn = new Array(DOTS).fill(null); this.leftAt = new Array(DOTS).fill(null); }
+  release(t) {   // a new download: the dots that are home fly back out to where they float
+    for (let i = 0; i < DOTS; i++) { if (this.cameIn[i] !== null) this.leftAt[i] = t; this.cameIn[i] = null; }
+  }
+  draw(ctx, cw, st, t, settle) {
+    this.ring(ctx, cw, st, t, settle);
+    drawFace(ctx, cw, mood(st, t), t, middleText(st));
+  }
+  ring(ctx, cw, st, t, settle) {
+    const lit = st.state === "done" ? DOTS : Math.floor(DOTS * fraction(st) + 1e-9);
+    for (let i = lit; i < DOTS; i++) {                      // still floating (drawn first, so they pass under)
+      let [x, y] = drift(LOOSE[i], t), color = FLOATING, r = SMALL;
+      if (i === lit && st.state === "downloading" && Math.floor(t * 2.5) % 2) color = RING;   // the next one twinkles
+      if (this.leftAt[i] !== null) {
+        const f = settle ? 1 : Math.min(1, (t - this.leftAt[i]) / FLY);
+        if (f < 1) {
+          const e = 1 - (1 - f) ** 3, [hx, hy] = home(i);
+          x = hx + (x - hx) * e; y = hy + (y - hy) * e; color = mix(RING, FLOATING, e); r = BIG + (SMALL - BIG) * e;
+        } else this.leftAt[i] = null;
+      }
+      dot(ctx, cw, x, y, r, color);
+    }
+    for (let i = 0; i < lit; i++) {                         // its share of the file is here: fly home
+      if (this.cameIn[i] === null) { this.cameIn[i] = t; this.leftAt[i] = null; }
+      const f = settle ? 1 : Math.min(1, (t - this.cameIn[i]) / FLY);
+      const e = 1 - (1 - f) ** 3;                           // quick, then settles
+      const [sx, sy] = drift(LOOSE[i], this.cameIn[i]), [hx, hy] = home(i);
+      dot(ctx, cw, sx + (hx - sx) * e, sy + (hy - sy) * e, f >= 1 ? BIG : SMALL + (BIG - SMALL) * e * 0.8, mix(FLOATING, RING, e));
+    }
+  }
+}
+function dot(ctx, cw, x, y, r, color) {
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x * cw, y * cw, r * cw, 0, 2 * Math.PI); ctx.fill();
+}
+
+// ---- a simulated download feeds it, the way a job's status.json would ---------------------------
+const SIZE = 104857600;     // 100Mb.dat: 104.9 MB
+const SCENARIOS = [
+  { id: "download", job: "3f9a1c", url: "https://example.com/files/100Mb.dat", file: "/Users/you/Downloads/100Mb.dat" },
+  { id: "busy",     job: "b41e07", url: "https://example.com/files/100Mb.dat", file: "/Users/you/Downloads/100Mb.dat", at: 0.36 },
+  { id: "silent",   job: "5d2a90", url: "https://example.com/files/100Mb.dat", file: "/Users/you/Downloads/100Mb.dat", at: 0.57 },
+  { id: "dead",     job: "c90d4e", url: "https://example.com/files/dataset-2023.zip", file: null },
+];
+const PER_CONNECTION = 1.15e6;        // bytes a second, before the wobble
+
+class Download {
+  constructor(sc) {
+    this.sc = sc; this.e = 0; this.vt = 0; this.phase = "starting";
+    this.bytes = 0; this.conns = 0; this.joinAt = 0; this.window = []; this.written = -1;
+    this.troubleAt = null; this.stallAt = null; this.trouble = null; this.stalled = null; this.hold = 0;
+    this.st = { state: "downloading", url: sc.url, file: sc.file, bytes: 0 };
+  }
+  get over() { return (this.phase === "done" && this.hold > 4.2) || (this.phase === "failed" && this.hold > 4.6); }
+  step(dt) {
+    this.e += dt;
+    const fast = this.phase === "stall" ? 6 : 1;             // a silent server's wait, sped up 6 times
+    this.vt += dt * fast;
+    const sc = this.sc;
+    if (this.phase === "starting") {
+      if (sc.id === "dead" && this.e >= 1.6) {
+        this.phase = "failed";
+        this.st = { state: "failed", url: sc.url, file: null,
+          error: { message: "the server said 404 Not Found", hint: "The link is wrong or has expired. Find a fresh link to the file." } };
+        return;
+      }
+      if (sc.id !== "dead" && this.e >= 1.1) { this.phase = "downloading"; this.conns = 1; this.joinAt = this.e; this.startVt = this.vt; }
+    } else if (this.phase === "downloading") {
+      if (this.conns < 8 && this.e - this.joinAt > 0.16) { this.conns++; this.joinAt = this.e; }
+      const wobble = 1 + 0.14 * Math.sin(this.vt * 2.1) + 0.08 * Math.sin(this.vt * 5.3 + 1);
+      this.bytes = Math.min(SIZE, this.bytes + this.conns * PER_CONNECTION * wobble * dt);
+      if (this.bytes > 0) this.trouble = null;               // trouble stays till bytes come
+      this.stalled = null;
+      const f = this.bytes / SIZE;
+      if (sc.id === "busy" && this.troubleAt === null && f >= sc.at) { this.phase = "busy"; this.troubleAt = this.e; }
+      if (sc.id === "silent" && this.stallAt === null && f >= sc.at) { this.phase = "stall"; this.stallAt = this.vt; }
+      if (this.bytes >= SIZE) { this.phase = "done"; this.finishVt = this.vt; }
+    } else if (this.phase === "busy") {                       // 429 twice: extra connections step back, the last one retries
+      const k = this.e - this.troubleAt;
+      this.conns = 1;
+      this.trouble = { message: "the server said 429 Too Many Requests", retry_in: k < 1 ? 1 : 2 };
+      if (k >= 3) { this.phase = "downloading"; this.joinAt = this.e; this.bytes += 1; }
+    } else if (this.phase === "stall") {                      // nothing arrives; 20 s of silence is a failed try
+      const s = this.vt - this.stallAt;
+      this.stalled = s >= 5 ? Math.round(s) : null;
+      if (s >= 20) this.trouble = { message: "timed out", retry_in: s < 23 ? 1 : s < 28 ? 2 : 4 };
+      if (s >= 33) { this.phase = "downloading"; this.bytes += 1; }
+    } else this.hold += dt;
+    this.status();
+  }
+  status() {   // what the worker writes to status.json, about 5 times a second
+    if (this.phase === "failed" || this.phase === "starting" && (this.e < 0.6 || this.sc.id === "dead")) return;
+    if (this.phase === "done") {
+      if (this.st.state !== "done") this.st = { state: "done", url: this.sc.url, file: this.sc.file, bytes: SIZE, size: SIZE, started: this.startVt, finished: this.finishVt };
+      return;
+    }
+    if (this.vt - this.written < 0.2) return;
+    this.written = this.vt;
+    const done = Math.floor(this.bytes);
+    this.window = this.window.filter(([t, b]) => this.vt - t <= 3 && b <= done).concat([[this.vt, done]]);
+    const [t0, b0] = this.window[0], [t1, b1] = this.window[this.window.length - 1];
+    const speed = t1 > t0 ? (b1 - b0) / (t1 - t0) : 0;
+    this.st = { state: "downloading", url: this.sc.url, file: this.sc.file, size: SIZE, bytes: done,
+      speed: Math.round(speed), eta: speed > 1 ? Math.round((SIZE - done) / speed) : null,
+      connections: this.conns, trouble: this.trouble, stalled: this.stalled };
+  }
+  reply() {   // the one line of JSON the agent gets when idm get returns
+    const sc = this.sc;
+    if (this.phase === "done") return [0, { ok: true, job: sc.job, state: "done", file: sc.file, bytes: SIZE, seconds: { raw: (this.finishVt - this.startVt).toFixed(1) } }];
+    if (this.phase === "failed") return [1, { ok: false, job: sc.job, state: "failed", error: { code: "NOT_FOUND", message: "the server said 404 Not Found", retryable: false, hint: "The link is wrong or has expired. Find a fresh link to the file." } }];
+    return null;
+  }
+}
+
+function jsonHTML(v) {
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  if (v === true) return '<span class="b">true</span>';
+  if (v === false) return '<span class="f">false</span>';
+  if (typeof v === "number") return `<span class="n">${v}</span>`;
+  if (v.raw) return `<span class="n">${v.raw}</span>`;            // a float as Python prints it: 45.0
+  if (typeof v === "string") return `<span class="s">"${esc(v)}"</span>`;
+  return "{" + Object.entries(v).map(([k, x]) => `<span class="k">"${k}"</span>: ${jsonHTML(x)}`).join(", ") + "}";
+}
+
+// ---- print texture: a few pixels knocked out of what's drawn, like ink that didn't take ---------
+const wear = (() => {
+  const c = document.createElement("canvas"); c.width = c.height = 128;
+  const g = c.getContext("2d"), img = g.createImageData(128, 128);
+  let seed = 7; const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < img.data.length; i += 4) if (rand() < 0.2) img.data[i + 3] = 120 + rand() * 135;
+  g.putImageData(img, 0, 0);
+  return c;
+})();
+function worn(ctx, cv) {
+  ctx.save(); ctx.globalCompositeOperation = "destination-out"; ctx.globalAlpha = 0.5;
+  ctx.fillStyle = ctx.createPattern(wear, "repeat"); ctx.fillRect(0, 0, cv.width, cv.height); ctx.restore();
+}
+
+// ---- the threads: one per connection, from the server down to dotty -----------------------------
+const ORDER = [3, 4, 2, 5, 1, 6, 0, 7];        // one connection hangs in the middle; more fan out
+const threads = { on: new Array(8).fill(0), flow: new Array(8).fill(0) };
+let geo = null;
+
+function measure() {
+  const s = stageEl.getBoundingClientRect(), d = canvas.getBoundingClientRect(), v = serverEl.getBoundingClientRect();
+  const cw = d.width / COLUMNS;
+  geo = { cx: d.left - s.left + (2 * CX + 1) * cw, cy: d.top - s.top + (2 * CY + 1) * cw, r: (RADIUS + 1.6) * cw,
+          top: v.bottom - s.top + 3, spread: v.width / 10 };
+}
+function curve(k, t) {   // thread k: from its spot on the server line, fanning out to the ring
+  const a = (-66 + k * 132 / 7) * Math.PI / 180, sway = 2.5 * Math.sin(t * 0.7 + k * 1.3);
+  const p0 = [geo.cx + (k - 3.5) * geo.spread, geo.top];
+  const p3 = [geo.cx + geo.r * Math.sin(a), geo.cy - geo.r * Math.cos(a)];
+  const dx = p3[0] - p0[0], dy = p3[1] - p0[1];
+  return [p0, [p0[0] + dx * 0.15 + sway, p0[1] + dy * 0.4], [p0[0] + dx * 0.75 - sway, p0[1] + dy * 0.78], p3];
+}
+function at(c, u) {
+  const v = 1 - u;
+  return [0, 1].map(i => v * v * v * c[0][i] + 3 * v * v * u * c[1][i] + 3 * v * u * u * c[2][i] + u * u * u * c[3][i]);
+}
+function wanted() {   // how many connections are open right now
+  if (paused || run.phase === "done" || run.phase === "failed") return 0;
+  return run.phase === "starting" ? 1 : run.conns;
+}
+function drawThreads(st, dt, settle) {
+  if (!geo) measure();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.round(stageEl.clientWidth * dpr), h = Math.round(stageEl.clientHeight * dpr);
+  if (tcv.width !== w || tcv.height !== h) { tcv.width = w; tcv.height = h; }
+  tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.clearRect(0, 0, w, h); tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const open = wanted(), moving = run.phase === "downloading" && !paused;
+  const pace = 0.3 + (st.speed || 0) / 2.4e7;
+  ORDER.forEach((k, i) => {
+    const target = i < open ? 1 : 0;
+    const rate = target ? 2.4 : 4.5;
+    threads.on[k] = settle ? target : threads.on[k] + clamp(target - threads.on[k], -rate * dt, rate * dt);
+    const on = threads.on[k];
+    if (on < 0.005) return;
+    const c = curve(k, t);
+    tctx.strokeStyle = "rgba(232, 227, 215, .5)"; tctx.lineWidth = 1.25; tctx.lineCap = "round";
+    tctx.beginPath(); tctx.moveTo(...c[0]);
+    for (let j = 1; j <= 40; j++) tctx.lineTo(...at(c, on * j / 40));
+    tctx.stroke();
+    if (on < 0.98) return;
+    if (moving) threads.flow[k] += dt * pace;
+    tctx.fillStyle = FACE;
+    for (let j = 0; j < 3; j++) {
+      const [x, y] = at(c, (threads.flow[k] + j / 3 + k * 0.137) % 1);
+      tctx.beginPath(); tctx.arc(x, y, 1.9, 0, 2 * Math.PI); tctx.fill();
+    }
+  });
+  worn(tctx, tcv);
+}
+
+// ---- running it ---------------------------------------------------------------------------------
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = id => document.getElementById(id);
+const stageEl = $("stage"), serverEl = $("server"), faceEl = $("face"), canvas = $("dotty-face"), ctx = canvas.getContext("2d");
+const tcv = $("threads"), tctx = tcv.getContext("2d");
+const caps = [$("cap0"), $("cap1"), $("cap2"), $("cap3")], cmdEl = $("cmd"), replyEl = $("reply"), exitEl = $("exit");
+const picks = [...document.querySelectorAll(".pick")];
+const dotty = new Dotty();
+let which = 0, run = new Download(SCENARIOS[0]), t = 0, shown = false, paused = false, watching = true;
+const seen = new Set();
+const io = new IntersectionObserver(es => es.forEach(e => e.isIntersecting ? seen.add(e.target) : seen.delete(e.target)), { rootMargin: "80px" });
+
+function pick(i) {
+  which = i; paused = false; dotty.release(t); run = new Download(SCENARIOS[i]);
+  picks.forEach((c, k) => c.setAttribute("aria-pressed", k === i ? "true" : "false"));
+  cmdEl.textContent = "$ idm get " + SCENARIOS[i].url;
+  replyEl.innerHTML = '<span class="wait">waiting for one line of json…</span>';
+  exitEl.textContent = ""; shown = false;
+}
+picks.forEach((c, i) => c.addEventListener("click", () => { pick(i); if (reduced) still(); }));
+
+function status() {   // what the watcher reads: the job's status, paused when you paused it
+  const st = { ...run.st, job: run.sc.job };
+  if (paused) st.state = "paused";
+  return st;
+}
+function size(cv, unitsWide) {
+  const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = Math.round(r.width * dpr), h = Math.round(w * cv.clientHeight / Math.max(1, cv.clientWidth));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return w / unitsWide;
+}
+function paint(dt, settle) {
+  const st = status(), cw = size(canvas, COLUMNS);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  dotty.draw(ctx, cw, st, t, settle);
+  worn(ctx, canvas);
+  [...caption(st), keyHint(st)].forEach((s, i) => { const v = s || " "; if (caps[i].textContent !== v) caps[i].textContent = v; });
+  drawThreads(st, dt, settle);
+  const r = run.reply();
+  if (r && !shown) {
+    shown = true;
+    exitEl.textContent = "exit " + r[0];
+    replyEl.innerHTML = jsonHTML(r[1]);
+  }
+}
+function still() {   // no motion wanted: run the download a while, then show it settled
+  for (let k = 0; k < 140 && run.phase !== "done" && run.phase !== "failed"; k++) { run.step(0.05); t += 0.05; }
+  paint(0, true);
+}
+
+// ---- dotty's faces, each beside what it means: they blink and look about while they're on screen
+const facesEl = $("faces"), faceRows = [...facesEl.children];
+function drawFaces(at) {
+  for (const li of faceRows) {
+    const cv = li.querySelector("canvas"), g = cv.getContext("2d"), dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const w = Math.round(cv.clientWidth * dpr);
+    if (cv.width !== w) cv.width = cv.height = w;
+    const cw = w / 18;                             // the face is 18 units square: columns 20-38, rows 8-26
+    const blinks = li.dataset.mood === "happy" && at % 3.2 < 0.2;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, w);
+    g.setTransform(1, 0, 0, 1, -Math.round(20 * cw), -Math.round(8 * cw));   // whole pixels: no seams
+    drawFace(g, cw, blinks ? "blink" : li.dataset.mood, at, "", 1.4);
+  }
+}
+
+// ---- keys: the same ones as in a terminal -------------------------------------------------------
+function press(key) {
+  const st = status();
+  const live = ["downloading", "paused"].includes(st.state) && run.phase !== "done" && run.phase !== "failed";
+  if (key === " ") paused = live ? !paused : paused;
+  else if (key === "p" && live) paused = true;
+  else if (key === "r") paused = false;
+  else if (key === "q") watch(false);
+  if (reduced) paint(0, true);
+}
+function watch(on) {
+  watching = on; faceEl.classList.toggle("away", !on); $("gone").hidden = on;
+}
+$("rewatch").addEventListener("click", () => watch(true));
+addEventListener("keydown", e => {
+  const cap = document.querySelector(`.cap[data-key="${e.key === "Control" ? "Control" : e.key.toLowerCase()}"]`);
+  if (cap) { cap.classList.add("down"); setTimeout(() => cap.classList.remove("down"), 160); }
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest("a, button, input, textarea, select")) return;
+  const key = e.key.toLowerCase();
+  if (![" ", "p", "r", "q"].includes(key)) return;
+  if (key === " ") { if (!seen.has(stageEl)) return; e.preventDefault(); }
+  press(key);
+});
+
+// ---- the eval, run by run (from eval/run_eval.py) --------------------------------------------------
+const EACH = 5;   // runs of each scenario, each way (eval/run_eval.py --trials 5, 25 Nov 2026)
+const RUNS = [    // what goes wrong, runs that ended right with idm, with curl/wget, and why the rest didn't
+  ["nothing", 5, 5],
+  ["429 too many requests, 3 times first", 5, 3, "twice, curl saved the empty 429 reply as a 0-byte file, and the agent took it for an empty file."],
+  ["the connection is cut once", 5, 5],
+  ["the link is dead (404)", 5, 5],
+  ["a download page that links to the file", 5, 5],
+  ["needs a login; the user hands over cookies", 5, 5],
+  ["10 MB from a slow server that allows 2 connections", 5, 5],
+];
+let mark = 0;
+$("runs-body").innerHTML = RUNS.map(([what, idm, plain, why]) => {
+  const marks = (right, who) => Array.from({ length: EACH }, (_, i) => i < right
+    ? `<i style="--d:${mark++}" title="${who}, run ${i + 1} of ${EACH}: ended right"></i>`
+    : `<i class="miss" style="--d:${mark++}" title="${who}, run ${i + 1} of ${EACH}: ${why}">✕</i>`).join("");
+  return `<tr><th scope="row">${what}</th><td class="c-idm">${marks(idm, "idm")}</td><td>${marks(plain, "curl, wget…")}</td></tr>`
+    + (why ? `<tr class="why"><td colspan="3"><span class="hand">✕ ${why}</span></td></tr>` : "");
+}).join("");
+
+function race(play) {   // the bars grow with the clock: 206 s plays in `play` seconds
+  const bars = [...document.querySelectorAll("#race .bar")], times = [...document.querySelectorAll("#race .t")];
+  const SECS = [113, 206], LONGEST = 206;
+  let start = null;
+  (function step(now) {
+    if (start === null) start = now;
+    const s = play ? Math.min(LONGEST, (now - start) / 1000 / play * LONGEST) : LONGEST;
+    SECS.forEach((full, i) => {
+      const v = Math.min(s, full);
+      bars[i].style.width = `${100 * v / LONGEST}%`;
+      times[i].textContent = `${Math.round(v)} s`;
+    });
+    if (s < LONGEST) requestAnimationFrame(step);
+  })(performance.now());
+}
+
+// ---- things that move once when they scroll in: receipts print, run marks pop, the race runs -----
+document.documentElement.classList.add("js");
+document.querySelectorAll(".slip").forEach(slip => slip.querySelectorAll(".copy").forEach((b, i) => {
+  b.style.setProperty("--i", i);
+  b.addEventListener("animationend", e => { if (e.animationName === "ping") b.classList.add("landed"); });
+}));
+const onceIn = [...document.querySelectorAll(".slip-wrap"), $("runs"), $("race")];
+function arrive(el) { el.classList.add("in"); if (el.id === "race") race(reduced ? 0 : 3.2); }
+if (reduced) onceIn.forEach(arrive);
+else {
+  const reveal = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { reveal.unobserve(e.target); arrive(e.target); }
+  }), { threshold: 0.3 });
+  onceIn.forEach(el => reveal.observe(el));
+}
+
+// ---- this page as a download: its ring fills while you read -------------------------------------
+const ringBtn = $("page-ring"), ringSvg = ringBtn.querySelector("svg"), pctEl = $("page-pct");
+ringSvg.innerHTML = Array.from({ length: DOTS }, (_, i) => {
+  const a = i * 2 * Math.PI / DOTS;
+  return `<circle cx="${(17 + 14 * Math.sin(a)).toFixed(2)}" cy="${(17 - 14 * Math.cos(a)).toFixed(2)}" r="1.7"/>`;
+}).join("");
+const ringDots = [...ringSvg.children];
+function onScroll() {
+  const max = document.documentElement.scrollHeight - innerHeight, f = max > 0 ? clamp(scrollY / max, 0, 1) : 1;
+  const lit = Math.round(f * DOTS);
+  ringDots.forEach((c, i) => c.classList.toggle("in", i < lit));
+  pctEl.textContent = f >= 0.995 ? "this page · saved" : `this page ${Math.floor(100 * f)}%`;
+  ringBtn.classList.toggle("on", scrollY > innerHeight * 0.6);
+}
+ringBtn.addEventListener("click", () => scrollTo({ top: 0 }));
+addEventListener("scroll", onScroll, { passive: true });
+onScroll();
+
+// ---- copy buttons --------------------------------------------------------------------------------
+document.querySelectorAll(".copy").forEach(btn => btn.addEventListener("click", () => {
+  getSelection().selectAllChildren(btn.previousElementSibling);     // selected, so it can be copied by hand too
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (e) {}
+  if (copied) getSelection().removeAllRanges();
+  const label = btn.querySelector("span");
+  label.textContent = copied ? "copied" : "selected"; btn.classList.toggle("done", copied);
+  setTimeout(() => { label.textContent = "copy"; btn.classList.remove("done"); }, 1600);
+}));
+
+// ---- one loop; it sleeps while the hero is off screen -------------------------------------------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (!document.hidden && seen.has(stageEl)) {
+    t += dt;
+    if (!paused) { run.step(dt); if (run.over) pick((which + 1) % SCENARIOS.length); }
+    paint(dt, false);
+  }
+  if (!document.hidden && seen.has(facesEl)) drawFaces(now / 1000);
+  requestAnimationFrame(frame);
+}
+io.observe(stageEl); io.observe(facesEl);
+addEventListener("resize", () => { measure(); drawFaces(0); paint(0, reduced); });
+drawFaces(0);
+document.fonts.ready.then(() => { measure(); paint(0, reduced); });
+if (reduced) { $("try").hidden = true; still(); }
+else { paint(0, false); requestAnimationFrame(frame); }
+})();
+</script>
+</body>
+</html>
