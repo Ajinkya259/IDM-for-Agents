@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,8 @@ dynamic = ["version"]
 description = "A download manager made for AI agents: one JSON line per command, error codes with the next step, many connections, resume, scheduling, and dotty, a face that shows the download live."
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [                         # for videos only: idm itself is the standard library
     "yt-dlp[default,deno]>=2025.11; python_version >= '3.11'",
     "imageio-ffmpeg; python_version >= '3.11'",

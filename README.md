@@ -2,51 +2,31 @@
 
 A download manager for AI agents. The agent runs `idm get URL` and gets one line of JSON back: the file's path, or an error code with the command to run next.
 
-It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hugging Face) and videos (YouTube, Instagram, TikTok and more). It needs Python 3.9+. On Python 3.11+ the install also brings what videos need: yt-dlp, ffmpeg and deno.
+<img src="site/assets/dotty-download.gif" width="520" alt="dotty, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
 
-<img src="docs/dotty-download.gif" width="560" alt="dotty, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
+**[Project page](https://ajinkya259.github.io/IDM-for-Agents/)** · MIT license
 
 ## Install
-
-**Command line**, for any agent or terminal:
 
 ```
 pipx install git+https://github.com/Ajinkya259/IDM-for-Agents
 ```
 
-`uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents` works too. On Python 3.11+ either one also installs yt-dlp, ffmpeg and deno into idm's own environment (about 155 MB), so videos work with nothing else. Sites change often; to update yt-dlp: `pipx runpip idm-for-agents install -U yt-dlp`.
+Python 3.9+. On 3.11+ it also brings yt-dlp, ffmpeg and deno, so videos work too. `uv tool install` works the same way.
 
-**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and dotty under each download. For videos, install the command line version too: Claude Code then runs that one, which has the video tools. Inside Claude Code:
+As a Claude Code plugin (adds a skill and shows dotty under each download):
 
 ```
 /plugin marketplace add Ajinkya259/IDM-for-Agents
 /plugin install idm-for-agents@idm-for-agents
 ```
 
-Or from a terminal:
+## Use
 
 ```
-claude plugin install idm-for-agents --marketplace Ajinkya259/IDM-for-Agents
-```
-
-## How it works
-
-1. The agent runs `idm get URL`.
-2. idm downloads the file in the background:
-   - A share link is first turned into the file's own link, and a video goes through yt-dlp.
-   - It uses up to 16 connections (8 by default).
-   - It resumes after any stop.
-   - It checks every piece against the file's ETag, so a file that changes mid-download fails with `FILE_CHANGED` instead of being saved as a mix.
-3. Within 90 seconds, the agent gets one line of JSON:
-   - **Done:** the file's path.
-   - **Still going:** `next` is `idm wait ID`.
-   - **Failed:** one of 18 error codes, a `hint`, and in `next` the command to run.
-
-idm never saves an error page as the file.
-
-```
-$ idm get https://example.com/big.iso
-{"ok": true, "job": "3f9a1c", "state": "downloading", "percent": 7, "eta": 158, "next": "idm wait 3f9a1c"}
+$ idm get https://example.com/data.zip
+{"ok": true, "job": "3f9a1c", "state": "done",
+ "file": "/Users/you/Downloads/data.zip", "bytes": 52428800, "seconds": 6.1}
 
 $ idm get https://example.com/members/report.pdf
 {"ok": false, "job": "77b0e2", "state": "failed",
@@ -54,61 +34,41 @@ $ idm get https://example.com/members/report.pdf
  "next": "idm get https://example.com/members/report.pdf -d /Users/you --cookies <cookies.txt>"}
 ```
 
-Exit codes: 0 means fine, 1 failed, 2 a bad command, and 3 failed but worth retrying (run `next`).
-
-<img src="docs/dotty-in-claude-code.gif" width="720" alt="A Claude Code session: the user says download this, the agent runs idm get, dotty fills under the command, and the agent gets one line of JSON.">
+- **Files, share links, videos.** Google Drive, Dropbox, OneDrive, GitHub and Hugging Face links point at the file itself. YouTube, Instagram, TikTok and more go through yt-dlp.
+- **Fast and safe.** Up to 16 connections, resumes after any stop, and never saves an error page as the file.
+- **Errors an agent can act on.** 18 codes, each with a hint and the next command to run.
 
 ## Commands
 
 ```
-idm get URL [-d FOLDER]          download and wait (replies within 90 s)
-idm get URL --audio              a video's sound only
-idm start URL                    start in the background, reply at once
-idm start URL --at 02:00         start at 2 am (or --in 2h)
-idm start URL --after ID         start when that download ends
-idm start URL --limit 2M         at most 2 MB/s
+idm get URL [-d FOLDER]       download and wait (replies within 90 s)
+idm start URL                 start in the background (--at 02:00, --after ID, --limit 2M)
 idm wait | status | pause | resume | cancel ID
-idm limit ID SPEED               change the speed limit while it runs (0: none)
-idm watch [ID]                   show dotty (no ID: every download)
-idm list                         the latest 20 downloads
+idm watch [ID]                show dotty
+idm list                      the latest 20 downloads
+
+options: --cookies FILE   --header 'NAME: VALUE'   -o NAME   --connections N   --audio
 ```
 
-These options work on `get` and `start`:
+## dotty
 
-| Option | Does |
-|---|---|
-| `--cookies FILE` | send browser cookies, for a site that needs a login |
-| `--header 'NAME: VALUE'` | send an extra request header |
-| `-o NAME` | save under this file name |
-| `--connections N` | use 1 to 16 connections |
+The face you watch while a download runs. Each of its 32 dots is 1/32 of the file.
 
-## Keyboard shortcuts
+<img src="site/assets/dotty-faces.svg" width="520" alt="dotty's five faces: starting, downloading, paused, trouble, done.">
 
-These work while `idm get`, `idm wait` or `idm watch` shows a download in your terminal:
-
-| Key | Does |
-|---|---|
-| `space` | pause, or resume |
-| `p` | pause |
-| `r` | resume |
-| `q` | stop watching; the download keeps going in the background |
-| `Ctrl+C` | in `idm get`: pause the download. In `idm wait` or `idm watch`: stop watching |
-
-They only work in a terminal, not when an agent runs idm.
+starting · downloading · paused · trouble · done
 
 ## Tested
 
-`python3 tests/run_tests.py` runs 186 checks.
-
-In an eval, real Claude Code agents downloaded from a server that fails on purpose:
+Real Claude Code agents (Sonnet) downloading from a server that fails on purpose, 7 ways, 5 runs each, checked byte for byte:
 
 | | Runs that ended right | 10 MB from a slow server |
 |---|---|---|
-| With idm | 28 of 28 | 112 s |
-| With curl | 26 of 28 | 207 s |
+| idm | 35 / 35 | 113 s |
+| curl, wget… | 33 / 35 | 206 s |
 
-Both curl misses saved the server's error reply as the file.
+Both curl misses were a server answering 429 Too Many Requests: curl saved the empty reply as a 0-byte file, and the agent took it for an empty file. `python3 tests/run_tests.py` runs 186 checks, no internet needed.
 
-[docs/GUIDE.md](docs/GUIDE.md) covers every error code, dotty, the queue, the eval and the code layout.
+## License
 
-The repo is private for now, and it has no license yet.
+MIT. Made by [Ajinkya Sambare](https://ajinkya.site). Not affiliated with Internet Download Manager (IDM) or Tonec Inc.
