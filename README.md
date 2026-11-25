@@ -2,7 +2,7 @@
 
 A download manager for AI agents. The agent runs `idm get URL` and gets one line of JSON back: the file's path, or an error code with the command to run next.
 
-It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hugging Face) and videos (YouTube, Instagram, TikTok and more). It needs Python 3.9+ and has no dependencies.
+It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hugging Face) and videos (YouTube, Instagram, TikTok and more). It needs Python 3.9+. On Python 3.11+ the install also brings what videos need: yt-dlp, ffmpeg and deno.
 
 <img src="docs/dotty-download.gif" width="560" alt="dotty, the download face: a ring of 32 dots fills as the file arrives, with MB done, speed, connections and time left underneath.">
 
@@ -14,9 +14,9 @@ It handles plain files, share links (Google Drive, Dropbox, OneDrive, GitHub, Hu
 pipx install git+https://github.com/Ajinkya259/IDM-for-Agents
 ```
 
-`uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents` works too. Videos also need yt-dlp: `brew install yt-dlp ffmpeg`.
+`uv tool install git+https://github.com/Ajinkya259/IDM-for-Agents` works too. On Python 3.11+ either one also installs yt-dlp, ffmpeg and deno into idm's own environment (about 155 MB), so videos work with nothing else. Sites change often; to update yt-dlp: `pipx runpip idm-for-agents install -U yt-dlp`.
 
-**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and dotty under each download. Inside Claude Code:
+**Claude Code plugin.** It gives Claude the `idm` command, a skill that tells it when to use idm and what to do on each error, and dotty under each download. For videos, install the command line version too: Claude Code then runs that one, which has the video tools. Inside Claude Code:
 
 ```
 /plugin marketplace add Ajinkya259/IDM-for-Agents
@@ -98,7 +98,7 @@ They only work in a terminal, not when an agent runs idm.
 
 ## Tested
 
-`python3 tests/run_tests.py` runs 181 checks.
+`python3 tests/run_tests.py` runs 186 checks.
 
 In an eval, real Claude Code agents downloaded from a server that fails on purpose:
 

@@ -144,7 +144,7 @@ def find_or_start(args):
     except OSError as e:
         raise from_disk(e) from None
     with jobs.locked(jobs.HOME / "jobs.lock"):
-        job = jobs.find(url, folder, args.output)
+        job = jobs.find(url, folder, args.output, choices["audio"])
         if args.again and job and job.status().get("state") not in jobs.ACTIVE:
             job = None                                   # (--again while it runs: that run)
         job = job or jobs.new(url, folder, args.output)

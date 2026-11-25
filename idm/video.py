@@ -13,14 +13,19 @@ cancel, the schedule, the queue, the speed limit, and dotty.
 
 A video's picture and sound are joined into one .mp4 (yt-dlp uses ffmpeg for that; without
 ffmpeg idm asks for the best video that comes as one file).  --audio gets the sound alone.
+
+Installing idm (on Python 3.11+) brings yt-dlp, ffmpeg and deno (the JavaScript YouTube needs)
+with it, into idm's own environment, where they aren't on the PATH: idm tells yt-dlp where they are.
 """
 import functools
 import glob
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.parse
 
@@ -69,17 +74,49 @@ def download(job, report):
 
 
 def yt_dlp():
-    tool = os.environ.get("IDM_YT_DLP") or shutil.which("yt-dlp")
-    if not tool or not os.path.isfile(tool):
+    """The command that runs yt-dlp: the one installed with idm, else one on the PATH.
+    (IDM_YT_DLP names another, for the tests.)"""
+    if os.environ.get("IDM_YT_DLP"):
+        named = os.environ["IDM_YT_DLP"]
+        command = (named,) if os.path.isfile(named) else None
+    elif importlib.util.find_spec("yt_dlp"):
+        command = (sys.executable, "-m", "yt_dlp")
+    else:
+        command = (shutil.which("yt-dlp"),) if shutil.which("yt-dlp") else None
+    if not command:
         raise IDMError("NEEDS_TOOL", "video sites need yt-dlp, and it isn't installed")
-    return tool
+    return command
+
+
+def ffmpeg():
+    """ffmpeg, which joins a video's picture and sound: one on the PATH, else the one installed
+    with idm (None if neither)."""
+    if shutil.which("ffmpeg"):
+        return shutil.which("ffmpeg")
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        return None
+
+
+def javascript(tool):
+    """What yt-dlp is told about JavaScript, which YouTube needs: nothing when deno is on the PATH
+    (yt-dlp finds that one), else where the deno installed with idm is, else to use node."""
+    if shutil.which("deno") or not new_enough(tool):
+        return []
+    try:
+        import deno
+        return ["--js-runtimes", f"deno:{deno.find_deno_bin()}"]
+    except (ImportError, FileNotFoundError):
+        return ["--js-runtimes", "node"] if shutil.which("node") else []
 
 
 def describe(tool, job):
     """Ask yt-dlp about the video, keep its answer for the download, and return the file it
     will be saved as and its size (the sum of its streams; None if unknown)."""
     try:
-        p = subprocess.run([tool, *choices(tool, job), "--simulate", "--flat-playlist",
+        p = subprocess.run([*tool, *choices(tool, job), "--simulate", "--flat-playlist",
                             "--playlist-items", "1:5", "--print", "filename", "--print", "%()j",
                             job.url],
                            capture_output=True, text=True, timeout=DESCRIBE_TIMEOUT)
@@ -109,7 +146,7 @@ def fetch(tool, job, report, have):
             "--newline", "--progress", "--progress-template", "download:IDMP %(progress)j",
             "--print", "after_move:IDMF %(filepath)s", "-N", str(job.connections)]
     with open(job.dir / "yt-dlp.log", "w") as log:
-        proc = subprocess.Popen([tool, *args, *(["-r", str(limit)] if limit else [])],
+        proc = subprocess.Popen([*tool, *args, *(["-r", str(limit)] if limit else [])],
                                 stdout=subprocess.PIPE, stderr=log, text=True)
         try:
             saved = follow(proc, job, report, limit, have)
@@ -161,27 +198,28 @@ def choices(tool, job):
     """yt-dlp's options for this job: where and under what name, which streams, its login."""
     stem = os.path.splitext(safe_name(job.name))[0].replace("%", "%%") if job.name else None
     args = ["--no-playlist", "-P", job.folder, "-o", f"{stem}.%(ext)s" if stem else NAME]
+    joiner = ffmpeg()
     if job.audio:                                            # the sound alone; a site without a
         args += ["-f", "ba[ext=m4a]/ba/b"]                   # sound-only stream sends the video,
-        args += ["-x"] if shutil.which("ffmpeg") else []     # and ffmpeg takes the sound out
-    elif shutil.which("ffmpeg"):
+        args += ["-x"] if joiner else []                     # and ffmpeg takes the sound out
+    elif joiner:
         args += ["-S", "res:1080,ext:mp4:m4a", "--merge-output-format", "mp4"]
     else:
         args += ["-f", "b[ext=mp4]/b"]                       # the best that needs no joining
+    if joiner:
+        args += ["--ffmpeg-location", joiner]
     if job.cookies:
         args += ["--cookies", job.cookies]
     for name, value in job.headers.items():
         args += ["--add-headers", f"{name}:{value}"]
-    if not shutil.which("deno") and shutil.which("node") and new_enough(tool):
-        args += ["--js-runtimes", "node"]                    # YouTube needs a JavaScript runtime
-    return args
+    return args + javascript(tool)
 
 
 @functools.lru_cache(maxsize=None)
 def new_enough(tool):
     """Does this yt-dlp know --js-runtimes (2025.11 and later)?"""
     try:
-        version = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=30).stdout
+        version = subprocess.run([*tool, "--version"], capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
     return version.strip() >= "2025.11"

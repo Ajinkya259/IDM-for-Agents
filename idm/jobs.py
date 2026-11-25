@@ -117,9 +117,10 @@ def every():
     return sorted(found, key=lambda j: j.created)
 
 
-def find(url, folder, name=None):
-    """The latest job for this link and destination (cancelled ones don't count)."""
-    same = [j for j in every() if (j.url, j.folder, j.name) == (url, folder, name)
+def find(url, folder, name=None, audio=False):
+    """The latest job for this link and destination, and for the sound alone or not (cancelled
+    ones don't count)."""
+    same = [j for j in every() if (j.url, j.folder, j.name, j.audio) == (url, folder, name, audio)
             and j.status().get("state") != "cancelled"]
     return same[-1] if same else None
 

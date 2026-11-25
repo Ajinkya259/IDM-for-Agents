@@ -91,7 +91,8 @@ def report(template, progress):
 def options(argv):
     """The options that take a value, as a dict (the last one wins)."""
     takes = {"-P", "-o", "-f", "-S", "-r", "-N", "--print", "--progress-template", "--load-info-json",
-             "--merge-output-format", "--cookies", "--add-headers", "--js-runtimes", "--playlist-items"}
+             "--merge-output-format", "--cookies", "--add-headers", "--js-runtimes", "--playlist-items",
+             "--ffmpeg-location"}
     opts, i = {}, 0
     while i < len(argv):
         if argv[i] in takes:

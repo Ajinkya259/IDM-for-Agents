@@ -131,7 +131,7 @@ A link to YouTube, youtu.be, Instagram, TikTok, X, Vimeo, Facebook, Reddit, Twit
 
 What yt-dlp says when it fails becomes one of idm's codes: a removed or private video is `NOT_FOUND` or `AUTH_REQUIRED` (Instagram often wants the browser's cookies), a 429 is `RATE_LIMITED`, a playlist is `NOT_A_FILE` with its first videos in `links`. No yt-dlp, or one too old for the site, is `NEEDS_TOOL`. For a video on a site not in the list, `--video` sends the link to yt-dlp anyway.
 
-yt-dlp needs installing (`brew install yt-dlp ffmpeg`, or `pipx install yt-dlp`); everything else in idm is the standard library. What you may download is up to each site's terms and the video's owner.
+Installing idm with pipx or uv on Python 3.11+ brings yt-dlp, ffmpeg (from `imageio-ffmpeg`) and deno (the JavaScript YouTube needs) into idm's own environment. They aren't on the PATH there, so idm runs that yt-dlp with its own Python and tells it where ffmpeg and deno are. Without them, idm uses the ones on the PATH (`brew install yt-dlp ffmpeg deno`). The rest of idm is the standard library. Sites change often, so yt-dlp needs updating now and then: `pipx runpip idm-for-agents install -U yt-dlp`. What you may download is up to each site's terms and the video's owner.
 
 ## Share links: Google Drive, Dropbox, OneDrive and more
 
@@ -301,7 +301,7 @@ A job's folder holds:
 ## Tests
 
 ```
-python3 tests/run_tests.py        # 181 checks: every command and error code, the pieces, dotty, the queue, videos, keys
+python3 tests/run_tests.py        # 186 checks: every command and error code, the pieces, dotty, the queue, videos, keys
 claude plugin test .              # the mod: which commands it watches, the face under them
 python3 tests/testserver.py       # the misbehaving local server on its own, to try things by hand
 ```

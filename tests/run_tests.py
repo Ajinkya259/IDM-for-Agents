@@ -1120,8 +1120,8 @@ def no_ytdlp_says_how_to_get_it():
     box = Sandbox(IDM_YT_DLP="/nowhere/yt-dlp")
     code, r = box.get("https://youtu.be/ok")
     e = r.get("error", {})
-    check("no yt-dlp: NEEDS_TOOL, the hint says how to install it, `next` carries on after",
-          e.get("code") == "NEEDS_TOOL" and "install yt-dlp" in e.get("hint", "")
+    check("no yt-dlp: NEEDS_TOOL, the hint gives the install that brings it, `next` carries on after",
+          e.get("code") == "NEEDS_TOOL" and "pipx install git+https://github.com/Ajinkya259/IDM-for-Agents" in e.get("hint", "")
           and r.get("next") == f"idm resume {r.get('job')}", r)
 
 
@@ -1513,13 +1513,70 @@ def video_options_and_failures():
     busy = video.problem("ERROR: Unable to download webpage: HTTP Error 503: Service Unavailable")
     check("a video site's 503 (Service Unavailable): SERVER_ERROR, worth retrying, not NOT_FOUND",
           busy.code == "SERVER_ERROR", busy.code)
-    sound = video.choices(FAKE_YTDLP, jobs.Job(id="v", url="https://youtu.be/x", folder="/dl", audio=True))
-    named = video.choices(FAKE_YTDLP, jobs.Job(id="v", url="https://youtu.be/x", folder="/dl",
-                                               name="my talk.mp4"))
+    sound = video.choices((FAKE_YTDLP,), jobs.Job(id="v", url="https://youtu.be/x", folder="/dl", audio=True))
+    named = video.choices((FAKE_YTDLP,), jobs.Job(id="v", url="https://youtu.be/x", folder="/dl",
+                                                  name="my talk.mp4"))
     check("--audio falls back to the whole video's sound when a site has no sound-only stream",
           sound[sound.index("-f") + 1].endswith("/b"), sound)
     check("-o NAME names a video too (with the extension yt-dlp gives it)",
           named[named.index("-o") + 1] == "my talk.%(ext)s", named)
+
+
+@test
+def a_videos_sound_is_its_own_download():
+    box = Sandbox(IDM_YT_DLP=FAKE_YTDLP)
+    _, whole = box.get("https://youtu.be/ok")
+    _, sound = box.get("https://youtu.be/ok", "--audio")
+    _, again = box.get("https://youtu.be/ok")
+    check("--audio after the whole video: a download of its own (not the video, 'already' there), "
+          "and the video asked for again is the one already there",
+          sound.get("state") == "done" and not sound.get("already") and sound.get("file", "").endswith(".m4a")
+          and sound.get("job") != whole.get("job") and again.get("already") and again.get("job") == whole.get("job"),
+          (whole, sound, again))
+
+
+@test
+def videos_use_the_tools_installed_with_idm():
+    """Installed with pipx on Python 3.11+, idm brings yt-dlp, ffmpeg and deno into its own
+    environment, off the PATH: it runs that yt-dlp, and tells it where the other two are."""
+    from types import SimpleNamespace as Fake
+    on_path, installed = {}, {"yt_dlp"}
+    saved = video.importlib, video.shutil, os.environ.pop("IDM_YT_DLP", None)
+    video.importlib = Fake(util=Fake(find_spec=lambda name: name in installed or None))
+    video.shutil = Fake(which=on_path.get)
+    sys.modules["imageio_ffmpeg"] = Fake(get_ffmpeg_exe=lambda: "/idm/ffmpeg")
+    sys.modules["deno"] = Fake(find_deno_bin=lambda: "/idm/deno")
+    job = jobs.Job(id="v", url="https://youtu.be/x", folder="/dl")
+
+    def tool():
+        try:
+            return video.yt_dlp()
+        except IDMError as e:
+            return e.code
+    try:
+        check("yt-dlp: the one installed with idm, run by idm's own Python",
+              tool() == (sys.executable, "-m", "yt_dlp"), tool())
+        args = video.choices((FAKE_YTDLP,), job)
+        check("ffmpeg and deno: yt-dlp is told where idm's own are, and joins the best streams",
+              args[args.index("--ffmpeg-location") + 1] == "/idm/ffmpeg" and "--merge-output-format" in args
+              and args[args.index("--js-runtimes") + 1] == "deno:/idm/deno", args)
+        installed.clear()
+        on_path.update({"yt-dlp": "/usr/bin/yt-dlp", "ffmpeg": "/usr/bin/ffmpeg", "deno": "/usr/bin/deno"})
+        args = video.choices((FAKE_YTDLP,), job)
+        check("without them, the ones on the PATH (yt-dlp finds deno there by itself)",
+              tool() == ("/usr/bin/yt-dlp",) and args[args.index("--ffmpeg-location") + 1] == "/usr/bin/ffmpeg"
+              and "--js-runtimes" not in args, (tool(), args))
+        on_path.clear()
+        del sys.modules["imageio_ffmpeg"], sys.modules["deno"]
+        args = video.choices((FAKE_YTDLP,), job)
+        check("with none: NEEDS_TOOL, and with no ffmpeg the best video that needs no joining",
+              tool() == "NEEDS_TOOL" and args[args.index("-f") + 1] == "b[ext=mp4]/b"
+              and "--ffmpeg-location" not in args, (tool(), args))
+    finally:
+        video.importlib, video.shutil = saved[:2]
+        if saved[2]:
+            os.environ["IDM_YT_DLP"] = saved[2]
+        sys.modules.pop("imageio_ffmpeg", None), sys.modules.pop("deno", None)
 
 
 def main():
